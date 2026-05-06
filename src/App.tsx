@@ -743,11 +743,19 @@ function SectionScreen({
         {tickets.map((ticket) => {
           const status = getTicketStatus(ticket, state.progress[ticket.id]);
           const readiness = Math.round(getReadiness(ticket, state.progress[ticket.id]) * 100);
+          const statusClass =
+            status.label === "готово"
+              ? " is-ready"
+              : status.label === "слабая тема"
+                ? " is-weak"
+                : status.label === "в работе"
+                  ? " is-progress"
+                  : "";
           return (
             <button
               key={ticket.id}
               type="button"
-              className="route-item"
+              className={`route-item${statusClass}`}
               onClick={() => onOpenTicket(ticket)}
             >
               <span className="ticket-num">{ticket.number}</span>

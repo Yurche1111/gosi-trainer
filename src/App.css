@@ -482,6 +482,20 @@ ul, ol, dl {
   text-align: left;
   color: var(--text);
   box-shadow: var(--shadow);
+  border-left: 4px solid transparent;
+  transition: border-left-color 0.2s ease;
+}
+
+.route-item.is-ready {
+  border-left-color: var(--green);
+}
+
+.route-item.is-weak {
+  border-left-color: #f0b15c;
+}
+
+.route-item.is-progress {
+  border-left-color: var(--blue);
 }
 
 .section-card:active,
