@@ -36,6 +36,8 @@ import {
 } from "./data/studyModel";
 import {
   buildDrill,
+  bumpStreak,
+  clearMistake,
   collectDueCards,
   collectNewCards,
   emptyAppState,
@@ -48,6 +50,7 @@ import {
   getTotalStats,
   getWeakTickets,
   groupTheoryIntoSections,
+  logMistakes,
   nextStep,
   nextTicket,
   pickCardSession,
@@ -56,6 +59,9 @@ import {
   recordAttempt,
   recordExam,
   sampleQuiz,
+  sampleQuizMixed,
+  streakIsAlive,
+  topMistakes,
 } from "./lib/studyEngine";
 import type { DrillItem, StudyStep } from "./lib/studyEngine";
 import { describeInterval, schedule } from "./lib/srs";
@@ -95,10 +101,14 @@ export function App() {
   const [examAnswers, setExamAnswers] = useState<Record<string, number>>({});
   const [examQuizSample, setExamQuizSample] = useState<QuizQuestion[]>([]);
 
-  const persist = (next: AppState) => {
-    setState(next);
+  const persist = (next: AppState, options?: { bumpStreak?: boolean }) => {
+    let toSave = next;
+    if (options?.bumpStreak !== false) {
+      toSave = { ...next, streak: bumpStreak(next.streak) };
+    }
+    setState(toSave);
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
     } catch {
       // ignore
     }
@@ -148,6 +158,7 @@ export function App() {
   function saveQuizAttempt(ticketId: string, sample: QuizQuestion[], answers: Record<string, number>) {
     const correct = sample.filter((q) => answers[q.id] === q.answerIndex).length;
     const wrong = sample.filter((q) => answers[q.id] !== q.answerIndex).map((q) => q.id);
+    const correctIds = sample.filter((q) => answers[q.id] === q.answerIndex).map((q) => q.id);
     const ratio = sample.length ? correct / sample.length : 0;
     const previous = state.progress[ticketId] ?? emptyTicketProgress();
     const updated = recordAttempt(previous, {
@@ -157,9 +168,13 @@ export function App() {
       total: sample.length,
       wrongIds: wrong,
     });
+    let nextMistakes = logMistakes(state.mistakes, wrong, ticketId);
+    // Если правильно ответил на вопрос, в котором раньше ошибался — снимаем его из «работы над ошибками».
+    for (const id of correctIds) nextMistakes = clearMistake(nextMistakes, id);
     persist({
       ...state,
       progress: { ...state.progress, [ticketId]: updated },
+      mistakes: nextMistakes,
     });
   }
 
@@ -205,7 +220,7 @@ export function App() {
     });
     setExamAnswers({});
     const first = examTickets[0];
-    if (first) setExamQuizSample(sampleQuiz(first.quiz, 8));
+    if (first) setExamQuizSample(sampleQuizMixed(first.quiz, 8, 0.6));
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
@@ -223,7 +238,7 @@ export function App() {
       const nextT = getTicket(screen.ticketIds[nextIdx]);
       setScreen({ ...screen, current: nextIdx, results: newResults });
       setExamAnswers({});
-      if (nextT) setExamQuizSample(sampleQuiz(nextT.quiz, 8));
+      if (nextT) setExamQuizSample(sampleQuizMixed(nextT.quiz, 8, 0.6));
       window.scrollTo({ top: 0, behavior: "auto" });
     } else {
       const entry: ExamLogEntry = {
@@ -370,46 +385,18 @@ function Header({
     title = "Подготовка";
   }
   return (
-    <>
-      <header className="app-header">
-        <button type="button" className="icon-button" onClick={onHome} aria-label="На главную">
-          <HomeIcon size={20} />
-        </button>
-        <div className="app-header-title">
-          <p>{kicker}</p>
-          <h1>{title}</h1>
-        </div>
-        <button type="button" className="icon-button" onClick={onSettings} aria-label="Настройки">
-          <SettingsIcon size={20} />
-        </button>
-      </header>
-      <button
-        type="button"
-        className="tiktok-escape"
-        onClick={openTikTok}
-      >
-        <span className="tiktok-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22">
-            <path
-              d="M19.6 6.3a4.6 4.6 0 0 1-2.7-1.5 4.6 4.6 0 0 1-1.1-2.4h-3v13.6a2.4 2.4 0 1 1-2.4-2.4c.3 0 .5 0 .8.1V10.6a5.7 5.7 0 1 0 4.6 5.6V8.7a7.7 7.7 0 0 0 4.6 1.5V7c-.3 0-.5 0-.8 0z"
-              fill="#25F4EE"
-              transform="translate(-1.2 1.2)"
-            />
-            <path
-              d="M19.6 6.3a4.6 4.6 0 0 1-2.7-1.5 4.6 4.6 0 0 1-1.1-2.4h-3v13.6a2.4 2.4 0 1 1-2.4-2.4c.3 0 .5 0 .8.1V10.6a5.7 5.7 0 1 0 4.6 5.6V8.7a7.7 7.7 0 0 0 4.6 1.5V7c-.3 0-.5 0-.8 0z"
-              fill="#FE2C55"
-              transform="translate(1.2 -1.2)"
-            />
-            <path
-              d="M19.6 6.3a4.6 4.6 0 0 1-2.7-1.5 4.6 4.6 0 0 1-1.1-2.4h-3v13.6a2.4 2.4 0 1 1-2.4-2.4c.3 0 .5 0 .8.1V10.6a5.7 5.7 0 1 0 4.6 5.6V8.7a7.7 7.7 0 0 0 4.6 1.5V7c-.3 0-.5 0-.8 0z"
-              fill="#fff"
-            />
-          </svg>
-        </span>
-        <span className="tiktok-text">похуй го тикток</span>
-        <span className="tiktok-spark" aria-hidden="true" />
+    <header className="app-header">
+      <button type="button" className="icon-button" onClick={onHome} aria-label="На главную">
+        <HomeIcon size={20} />
       </button>
-    </>
+      <div className="app-header-title">
+        <p>{kicker}</p>
+        <h1>{title}</h1>
+      </div>
+      <button type="button" className="icon-button" onClick={onSettings} aria-label="Настройки">
+        <SettingsIcon size={20} />
+      </button>
+    </header>
   );
 }
 
@@ -443,20 +430,32 @@ function HomeScreen({
   const masteredPercent = totalStats.total
     ? Math.round((totalStats.mastered / totalStats.total) * 100)
     : 0;
+  const mistakesTop = useMemo(() => topMistakes(state.mistakes, 5), [state.mistakes]);
 
   return (
     <main className="home-screen">
       <section className="daily-card">
         <div className="daily-head">
           <p className="eyebrow">Сегодня</p>
-          {dailyPlan.daysUntilExam !== null && (
-            <span className="exam-countdown">
-              <CalendarDays size={14} />
-              {dailyPlan.daysUntilExam === 0
-                ? "сегодня экзамен"
-                : `${dailyPlan.daysUntilExam} дн. до госа`}
-            </span>
-          )}
+          <div className="daily-head-meta">
+            {state.streak.current > 0 && (
+              <span
+                className={`streak-chip ${streakIsAlive(state.streak) ? "alive" : "dead"}`}
+                title={`Лучшая серия: ${state.streak.best}`}
+              >
+                <Flame size={14} />
+                {state.streak.current} {state.streak.current === 1 ? "день" : "дней"}
+              </span>
+            )}
+            {dailyPlan.daysUntilExam !== null && (
+              <span className="exam-countdown">
+                <CalendarDays size={14} />
+                {dailyPlan.daysUntilExam === 0
+                  ? "сегодня экзамен"
+                  : `${dailyPlan.daysUntilExam} дн. до госа`}
+              </span>
+            )}
+          </div>
         </div>
         <div className="daily-stats">
           <DailyStat
@@ -524,6 +523,40 @@ function HomeScreen({
           </div>
         )}
       </section>
+      {mistakesTop.length > 0 && (
+        <section className="mistakes-card">
+          <div className="mistakes-head">
+            <p className="eyebrow">
+              <Brain size={14} /> Работа над ошибками
+            </p>
+            <span className="muted">{Object.keys(state.mistakes).length} вопросов</span>
+          </div>
+          <p className="muted">Вопросы, в которых ты чаще всего ошибался. Открой билет, чтобы повторить тему.</p>
+          <ul className="mistakes-list">
+            {mistakesTop.map((m) => {
+              const t = getTicket(m.ticketId);
+              if (!t) return null;
+              return (
+                <li key={m.questionId}>
+                  <button
+                    type="button"
+                    className="mistake-item"
+                    onClick={() => onOpenTicket(m.ticketId)}
+                  >
+                    <span className="ticket-num">{t.number}</span>
+                    <span className="mistake-text">
+                      <strong>{t.title}</strong>
+                      <small>ошибок: {m.count}</small>
+                    </span>
+                    <ChevronRight size={16} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
       <section className="action-grid">
         <ActionTile
           icon={<Repeat2 size={22} />}
@@ -1028,11 +1061,17 @@ function TheoryFlow({
   onNext: () => void;
 }) {
   const sectionsList = useMemo(() => groupTheoryIntoSections(ticket.theory), [ticket.theory]);
-  // +1 «секция» — финальная: глоссарий + подводные камни.
-  const totalSteps = sectionsList.length + 1;
+  const hasCheatSheet = (ticket.cheatSheet?.length ?? 0) > 0;
+  const hasProvocations = (ticket.examinerProvocations?.length ?? 0) > 0;
+  // Дополнительные шаги: глоссарий+pitfalls, памятка, провокации.
+  const extraSteps: Array<"closing" | "cheatSheet" | "provocations"> = ["closing"];
+  if (hasCheatSheet) extraSteps.push("cheatSheet");
+  if (hasProvocations) extraSteps.push("provocations");
+  const totalSteps = sectionsList.length + extraSteps.length;
   const [step, setStep] = useState(0);
   const isLast = step === totalSteps - 1;
   const stepLabel = `${step + 1} / ${totalSteps}`;
+  const extraStep = step >= sectionsList.length ? extraSteps[step - sectionsList.length] : null;
 
   function go(delta: number) {
     setStep((s) => Math.max(0, Math.min(totalSteps - 1, s + delta)));
@@ -1053,7 +1092,7 @@ function TheoryFlow({
         <span className="step-counter">Часть {stepLabel}</span>
       </div>
 
-      {step < sectionsList.length ? (
+      {step < sectionsList.length && (
         <>
           <h2 className="step-title">{sectionsList[step].heading}</h2>
           {sectionsList[step].blocks.map((block, idx) => (
@@ -1067,7 +1106,8 @@ function TheoryFlow({
             />
           ))}
         </>
-      ) : (
+      )}
+      {extraStep === "closing" && (
         <>
           <h2 className="step-title">Закрепление</h2>
           {ticket.glossary.length > 0 && (
@@ -1097,6 +1137,28 @@ function TheoryFlow({
           </details>
         </>
       )}
+      {extraStep === "cheatSheet" && (
+        <>
+          <h2 className="step-title">Памятка для гос-экзамена</h2>
+          <p className="muted">3-5 правил, которые комиссия любит спрашивать. Запоминаются быстро, спасают часто.</p>
+          <ul className="cheatsheet-list">
+            {(ticket.cheatSheet ?? []).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {extraStep === "provocations" && (
+        <>
+          <h2 className="step-title">Типичные вопросы комиссии</h2>
+          <p className="muted">Когда основной ответ дан, экзаменатор любит уточнить. Будь готов:</p>
+          <ol className="provocations-list">
+            {(ticket.examinerProvocations ?? []).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ol>
+        </>
+      )}
 
       <div className="bottom-actions">
         <button
@@ -1118,6 +1180,15 @@ function TheoryFlow({
         )}
       </div>
     </article>
+  );
+}
+
+function Coach({ tone, title, text }: { tone: "info" | "warm" | "tip"; title: string; text: string }) {
+  return (
+    <aside className={`coach tone-${tone}`}>
+      <strong>{title}</strong>
+      <p>{text}</p>
+    </aside>
   );
 }
 
@@ -1252,6 +1323,13 @@ function CardSession({
         </div>
         <span className="step-counter">Карта {idx + 1} / {session.length}</span>
       </div>
+      {idx === 0 && (
+        <Coach
+          tone="info"
+          title="Закрепляем определения"
+          text="Сейчас ты пройдёшь сессию из карт. Отвечай честно: «Снова» если не помнишь, «Хорошо» если вспомнил быстро. Чем точнее оценка — тем умнее интервалы повтора."
+        />
+      )}
       <button
         type="button"
         className={`memory-card ${showBack ? "flipped" : ""}`}
@@ -1309,7 +1387,7 @@ function QuizFlow({
   onSaveQuiz: (sample: QuizQuestion[], answers: Record<string, number>) => void;
   onNext: () => void;
 }) {
-  const sample = useMemo(() => sampleQuiz(ticket.quiz, 8), [ticket.quiz]);
+  const sample = useMemo(() => sampleQuizMixed(ticket.quiz, 8, 0.4), [ticket.quiz]);
   const [idx, setIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [picked, setPicked] = useState<number | null>(null);
@@ -1373,6 +1451,13 @@ function QuizFlow({
         </div>
         <span className="step-counter">Вопрос {idx + 1} / {total}</span>
       </div>
+      {idx === 0 && (
+        <Coach
+          tone="warm"
+          title="Готов? Тест без подсказок."
+          text="8 случайных вопросов из банка. 60% базовых + 40% сложных (кейсы, сравнения). Не подсматривай — лучше ошибиться и понять."
+        />
+      )}
       <section className="quiz-item single">
         <h3>{q.prompt}</h3>
         <div className="options-list">
@@ -1454,6 +1539,13 @@ function PracticeFlow({
         </div>
         <span className="step-counter">Задача {idx + 1} / {tasks.length}</span>
       </div>
+      {idx === 0 && (
+        <Coach
+          tone="tip"
+          title="Самое важное — задачи"
+          text="Решай сначала сам, без подглядывания. Если совсем застрял — открой подсказку. Решение смотри только после своей попытки."
+        />
+      )}
       <section className="practice-card">
         <div className="practice-head">
           <h3>{task.title}</h3>
@@ -2158,6 +2250,8 @@ function SettingsScreen({
                     progress: parsed.progress ?? {},
                     exams: parsed.exams ?? [],
                     settings: { ...emptyAppState().settings, ...(parsed.settings ?? {}) },
+                    streak: parsed.streak ?? emptyAppState().streak,
+                    mistakes: parsed.mistakes ?? {},
                   });
                   alert("Прогресс импортирован.");
                 } catch (err) {
@@ -2373,40 +2467,6 @@ function extractMatch(ticket: Ticket, query: string): string {
   return ticket.title;
 }
 
-function openTikTok() {
-  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-  const isIOS = /iPad|iPhone|iPod/.test(ua);
-  const isAndroid = /Android/.test(ua);
-  const webUrl = "https://www.tiktok.com/foryou";
-
-  if (isAndroid) {
-    // Intent URL — Android сам откроет приложение, иначе перейдёт на сайт.
-    window.location.href =
-      "intent://www.tiktok.com/foryou#Intent;package=com.zhiliaoapp.musically;scheme=https;S.browser_fallback_url=" +
-      encodeURIComponent(webUrl) +
-      ";end";
-    return;
-  }
-
-  if (isIOS) {
-    // На iOS ставим таймер: если приложение схватило ссылку — страница ушла, таймер не сработает.
-    // Если приложения нет — через 1.2 сек откроем web.
-    const timer = window.setTimeout(() => {
-      window.location.href = webUrl;
-    }, 1200);
-    const onHide = () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onHide);
-    };
-    document.addEventListener("visibilitychange", onHide);
-    window.location.href = "snssdk1233://feed";
-    return;
-  }
-
-  // Десктоп — просто новая вкладка с сайтом.
-  window.open(webUrl, "_blank", "noopener,noreferrer");
-}
-
 function loadState(): AppState {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -2416,6 +2476,8 @@ function loadState(): AppState {
       progress: parsed.progress ?? {},
       exams: parsed.exams ?? [],
       settings: { ...emptyAppState().settings, ...(parsed.settings ?? {}) },
+      streak: parsed.streak ?? emptyAppState().streak,
+      mistakes: parsed.mistakes ?? {},
     };
   } catch {
     return emptyAppState();

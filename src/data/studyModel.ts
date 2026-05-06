@@ -10,11 +10,20 @@ import { section8Tickets } from "./tickets/section8";
 import { section9Tickets } from "./tickets/section9";
 import { extraQuiz, microChecks, ticketLinks } from "./extras";
 import { extraQuiz16, microChecks16 } from "./extras-1-6";
+import { cheatSheets, examinerProvocations, extraPractice, hardQuiz } from "./extras-hard";
+import { extraTheory } from "./extras-theory";
 
-const allExtraQuiz: Record<string, typeof extraQuiz[string]> = {
-  ...extraQuiz16,
-  ...extraQuiz,
-};
+function mergeQuiz(...maps: Record<string, typeof extraQuiz[string]>[]): Record<string, typeof extraQuiz[string]> {
+  const out: Record<string, typeof extraQuiz[string]> = {};
+  for (const m of maps) {
+    for (const [k, v] of Object.entries(m)) {
+      out[k] = [...(out[k] ?? []), ...v];
+    }
+  }
+  return out;
+}
+
+const allExtraQuiz = mergeQuiz(extraQuiz16, extraQuiz, hardQuiz);
 
 const allMicroChecks: Record<string, typeof microChecks[string]> = {
   ...microChecks16,
@@ -30,23 +39,35 @@ function enrichTicket(ticket: Ticket): Ticket {
   }
   const quiz = Array.from(quizMap.values());
 
-  // Вставить микро-квизы.
-  let theory: TheoryBlock[] = ticket.theory;
+  // Расширить теорию: оригинал + extraTheory + микро-квизы.
+  let theory: TheoryBlock[] = [
+    ...ticket.theory,
+    ...(extraTheory[ticket.id] ?? []),
+  ];
   const checks = allMicroChecks[ticket.id];
   if (checks && checks.length > 0) {
     const sorted = [...checks].sort((a, b) => b.afterIndex - a.afterIndex);
-    theory = ticket.theory.slice();
     for (const c of sorted) {
       const idx = Math.min(c.afterIndex, theory.length - 1);
       theory.splice(idx + 1, 0, c.check);
     }
   }
 
+  // Слить дополнительные практические задачи.
+  const extraTasks = extraPractice[ticket.id] ?? [];
+  const practice =
+    ticket.practice || extraTasks.length > 0
+      ? [...(ticket.practice ?? []), ...extraTasks]
+      : undefined;
+
   return {
     ...ticket,
     quiz,
     theory,
+    practice,
     relatedTicketIds: ticketLinks[ticket.id],
+    cheatSheet: cheatSheets[ticket.id],
+    examinerProvocations: examinerProvocations[ticket.id],
   };
 }
 

@@ -3,6 +3,7 @@ import type {
   AppState,
   ExamLogEntry,
   Flashcard,
+  MistakeRecord,
   ProgressMap,
   QuizQuestion,
   TheoryBlock,
@@ -40,7 +41,80 @@ export function emptyAppState(): AppState {
     progress: {},
     exams: [],
     settings: { ...DEFAULT_SETTINGS },
+    streak: { current: 0, best: 0, lastActiveDate: "" },
+    mistakes: {},
   };
+}
+
+// ─────────────────────────────────────────────
+// Streak (серия дней)
+// ─────────────────────────────────────────────
+
+export function dateKey(d = new Date()): string {
+  return d.toISOString().split("T")[0];
+}
+
+/** Регистрирует активность за сегодня, обновляя серию. */
+export function bumpStreak(streak: AppState["streak"], now = new Date()): AppState["streak"] {
+  const today = dateKey(now);
+  if (streak.lastActiveDate === today) return streak;
+  const yesterday = dateKey(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const next = streak.lastActiveDate === yesterday ? streak.current + 1 : 1;
+  return {
+    current: next,
+    best: Math.max(streak.best, next),
+    lastActiveDate: today,
+  };
+}
+
+/** Проверяет, активен ли streak сегодня (если нет — current считается потерянным). */
+export function streakIsAlive(streak: AppState["streak"], now = new Date()): boolean {
+  if (!streak.lastActiveDate) return false;
+  const today = dateKey(now);
+  const yesterday = dateKey(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  return streak.lastActiveDate === today || streak.lastActiveDate === yesterday;
+}
+
+// ─────────────────────────────────────────────
+// Mistakes
+// ─────────────────────────────────────────────
+
+export function logMistakes(
+  mistakes: AppState["mistakes"],
+  questionIds: string[],
+  ticketId: string,
+  now = new Date(),
+): AppState["mistakes"] {
+  const next = { ...mistakes };
+  for (const id of questionIds) {
+    const prev = next[id];
+    next[id] = {
+      questionId: id,
+      ticketId,
+      count: (prev?.count ?? 0) + 1,
+      lastAt: now.toISOString(),
+    };
+  }
+  return next;
+}
+
+export function clearMistake(
+  mistakes: AppState["mistakes"],
+  questionId: string,
+): AppState["mistakes"] {
+  const next = { ...mistakes };
+  delete next[questionId];
+  return next;
+}
+
+/** Топ-N вопросов, в которых юзер чаще всего ошибается. */
+export function topMistakes(
+  mistakes: AppState["mistakes"],
+  limit = 10,
+): MistakeRecord[] {
+  return Object.values(mistakes)
+    .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+    .slice(0, limit);
 }
 
 /** Готовность билета 0..1. Учитываются: прочитано, доля выученных карт, лучший тест, практика. */
@@ -221,6 +295,54 @@ export function sampleQuiz(quiz: QuizQuestion[], size = QUIZ_SAMPLE_SIZE, seed =
     out.push(pool.splice(idx, 1)[0]);
   }
   return out;
+}
+
+/**
+ * Сэмплинг с долями сложности.
+ * mix.hard: 0..1 — какая доля выборки должна быть hard.
+ * Если в банке не хватает hard, добивается base. И наоборот.
+ */
+export function sampleQuizMixed(
+  quiz: QuizQuestion[],
+  size = QUIZ_SAMPLE_SIZE,
+  hardRatio = 0.4,
+  seed = Date.now(),
+): QuizQuestion[] {
+  const hardPool = quiz.filter((q) => q.difficulty === "hard");
+  const basePool = quiz.filter((q) => q.difficulty !== "hard");
+  const wantHard = Math.min(hardPool.length, Math.round(size * hardRatio));
+  const wantBase = Math.min(basePool.length, size - wantHard);
+  let totalSize = wantHard + wantBase;
+  let extraNeeded = size - totalSize;
+  // Добиваем недостающее из любой части.
+  const hardSample = sampleQuiz(hardPool, wantHard, seed);
+  const baseSample = sampleQuiz(basePool, wantBase, seed + 1);
+  const out = [...hardSample, ...baseSample];
+  if (extraNeeded > 0) {
+    const remaining = quiz.filter((q) => !out.find((x) => x.id === q.id));
+    const more = sampleQuiz(remaining, extraNeeded, seed + 2);
+    out.push(...more);
+  }
+  // Перемешиваем итог.
+  return shuffleArray(out, seed + 3);
+}
+
+function shuffleArray<T>(arr: T[], seed: number): T[] {
+  const out = arr.slice();
+  let s = seed;
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    s = (s * 9301 + 49297) % 233280;
+    const j = Math.floor((s / 233280) * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** Выборка только hard-вопросов из билета. Если их нет — возвращает обычный sample. */
+export function sampleHardQuiz(quiz: QuizQuestion[], size = QUIZ_SAMPLE_SIZE, seed = Date.now()): QuizQuestion[] {
+  const hard = quiz.filter((q) => q.difficulty === "hard");
+  if (hard.length === 0) return sampleQuiz(quiz, size, seed);
+  return sampleQuiz(hard, size, seed);
 }
 
 /** Все карты со всех билетов, которые пора показать (due). */

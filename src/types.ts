@@ -32,12 +32,18 @@ export interface Flashcard {
   back: string;
 }
 
+export type QuizDifficulty = "base" | "hard";
+
 export interface QuizQuestion {
   id: string;
   prompt: string;
   options: string[];
   answerIndex: number;
   explanation: string;
+  /** Сложность: base — обычный, hard — каверзный (case, исключение, сравнение). */
+  difficulty?: QuizDifficulty;
+  /** Подсказка, к каким секциям теории отсылает (для работы над ошибками). */
+  topic?: string;
 }
 
 export interface PracticeTask {
@@ -71,6 +77,10 @@ export interface Ticket {
   quiz: QuizQuestion[];
   practice?: PracticeTask[];
   relatedTicketIds?: string[];
+  /** Памятки — короткие правила/формулы, которые надо запомнить намертво. */
+  cheatSheet?: string[];
+  /** Что чаще всего комиссия спрашивает уточнять. */
+  examinerProvocations?: string[];
 }
 
 export type CardGrade = "again" | "hard" | "good" | "easy";
@@ -163,8 +173,31 @@ export interface AppSettings {
   reviewsPerDay: number;
 }
 
+export interface StreakState {
+  /** Текущая серия дней подряд. */
+  current: number;
+  /** Лучшая серия дней. */
+  best: number;
+  /** ISO-дата последней активности (yyyy-mm-dd). */
+  lastActiveDate: string;
+}
+
+export interface MistakeRecord {
+  /** id вопроса. */
+  questionId: string;
+  /** id билета. */
+  ticketId: string;
+  /** Кол-во раз, когда юзер ошибся в этом вопросе. */
+  count: number;
+  /** Когда последний раз ошибся. */
+  lastAt: string;
+}
+
 export interface AppState {
   progress: ProgressMap;
   exams: ExamLogEntry[];
   settings: AppSettings;
+  streak: StreakState;
+  /** Карта ошибок: ключ = questionId. */
+  mistakes: Record<string, MistakeRecord>;
 }
