@@ -2268,6 +2268,93 @@ ul, ol, dl {
   color: var(--red);
 }
 
+/* ---------- Plan preview after card session ---------- */
+
+.plan-preview {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--blue-soft);
+  border: 1px solid #c8d6f7;
+  margin: 8px 0;
+}
+
+.plan-preview .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue);
+}
+
+.plan-preview-opening {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #1d2939;
+  margin: 0;
+}
+
+.plan-preview-steps {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 13.5px;
+  color: #344054;
+  line-height: 1.55;
+}
+
+.plan-preview-steps li {
+  margin-bottom: 4px;
+}
+
+.plan-preview-steps .muted {
+  color: var(--muted);
+  list-style: none;
+  margin-left: -16px;
+  font-style: italic;
+}
+
+/* ---------- Drill CTA on TicketDoneScreen ---------- */
+
+.drill-cta {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: linear-gradient(140deg, #fff8e8 0%, #fff1cf 100%);
+  border: 1px solid #f0c976;
+  margin: 8px 0;
+}
+
+.drill-cta-text .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8a5a00;
+  margin-bottom: 6px;
+}
+
+.drill-cta-text p {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #344054;
+  margin: 0;
+}
+
+.drill-cta-text p b {
+  color: #8a5a00;
+  font-weight: 800;
+}
+
+.drill-cta .secondary-button {
+  border-color: #f0c976;
+  background: #fff;
+  color: #8a5a00;
+}
+
+.drill-cta .secondary-button:active {
+  background: #fff8e8;
+}
+
 /* ---------- Big secondary button ---------- */
 
 .secondary-button.big {

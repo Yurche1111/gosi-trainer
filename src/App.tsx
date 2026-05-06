@@ -826,7 +826,7 @@ function TicketScreen({
           <ModeTile
             icon={<Lightbulb size={26} />}
             title="План ответа"
-            sub="как сказать комиссии"
+            sub="шпаргалка для комиссии"
             onClick={() => onModeChange("plan")}
             accent
           />
@@ -867,7 +867,7 @@ function TicketScreen({
           <ModeTile
             icon={<PlayCircle size={26} />}
             title="Прогон"
-            sub="быстрая проверка"
+            sub="5-минутная проверка билета"
             onClick={() => onModeChange("drill")}
             full
           />
@@ -922,7 +922,7 @@ function TicketScreen({
         />
       )}
       {mode === "plan" && (
-        <ExamPlanPanel ticket={ticket} onNext={() => onModeChange(null)} />
+        <ExamPlanPanel ticket={ticket} onNext={() => onModeChange("quiz")} />
       )}
       {mode === "cards" && (
         <CardSession
@@ -930,6 +930,7 @@ function TicketScreen({
           progress={progress}
           onRateCard={(card, grade) => onRateCard(ticket.id, card, grade)}
           onNext={() => goToNext("cards")}
+          onShowPlan={() => onModeChange("plan")}
         />
       )}
       {mode === "quiz" && (
@@ -966,6 +967,7 @@ function TicketScreen({
             else onHome();
           }}
           onBackToMenu={() => onModeChange(null)}
+          onDrill={() => onModeChange("drill")}
           onHome={onHome}
         />
       )}
@@ -1143,7 +1145,7 @@ function ExamPlanPanel({ ticket, onNext }: { ticket: Ticket; onNext: () => void 
         <p>{ticket.examPlan.closing}</p>
       </section>
       <button type="button" className="primary-button big" onClick={onNext}>
-        <CheckCircle2 size={20} /> Понятно
+        <ArrowRight size={20} /> Дальше: тест
       </button>
     </article>
   );
@@ -1158,11 +1160,13 @@ function CardSession({
   progress,
   onRateCard,
   onNext,
+  onShowPlan,
 }: {
   ticket: Ticket;
   progress: TicketProgress | undefined;
   onRateCard: (card: Flashcard, grade: CardGrade) => void;
   onNext: () => void;
+  onShowPlan: () => void;
 }) {
   const session = useMemo(() => pickCardSession(ticket, progress), [ticket, progress]);
   const [idx, setIdx] = useState(0);
@@ -1204,6 +1208,25 @@ function CardSession({
             <span className="tone-again">Снова: <b>{stats.again}</b></span>
           </div>
         </div>
+
+        <section className="plan-preview">
+          <p className="eyebrow">
+            <Lightbulb size={14} /> А теперь представь, что ты у комиссии
+          </p>
+          <p className="plan-preview-opening">{ticket.examPlan.opening}</p>
+          <ol className="plan-preview-steps">
+            {ticket.examPlan.steps.slice(0, 3).map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+            {ticket.examPlan.steps.length > 3 && (
+              <li className="muted">…ещё {ticket.examPlan.steps.length - 3} пункта</li>
+            )}
+          </ol>
+          <button type="button" className="secondary-button big" onClick={onShowPlan}>
+            <Lightbulb size={18} /> Полный план ответа
+          </button>
+        </section>
+
         <button type="button" className="primary-button big" onClick={onNext}>
           Дальше: тест <ArrowRight size={20} />
         </button>
@@ -1660,11 +1683,13 @@ function TicketDoneScreen({
   ticket,
   onNextTicket,
   onBackToMenu,
+  onDrill,
   onHome,
 }: {
   ticket: Ticket;
   onNextTicket: () => void;
   onBackToMenu: () => void;
+  onDrill: () => void;
   onHome: () => void;
 }) {
   const nt = nextTicket(allTickets, ticket.id);
@@ -1676,6 +1701,22 @@ function TicketDoneScreen({
         <p>{ticket.number}. {ticket.title}</p>
         <p className="muted">Теория, карточки и тест пройдены.</p>
       </div>
+
+      <section className="drill-cta">
+        <div className="drill-cta-text">
+          <p className="eyebrow">
+            <PlayCircle size={14} /> Хочешь закрепить?
+          </p>
+          <p>
+            Сделай <b>прогон</b> — 5 минут: 3 случайные карты, 3 вопроса теста и одна задача.
+            Это лучший способ убедиться, что билет реально засел.
+          </p>
+        </div>
+        <button type="button" className="secondary-button big" onClick={onDrill}>
+          <PlayCircle size={18} /> Сделать прогон
+        </button>
+      </section>
+
       {nt ? (
         <button type="button" className="primary-button big" onClick={onNextTicket}>
           Следующий билет: {nt.number}. {nt.title} <ArrowRight size={20} />
