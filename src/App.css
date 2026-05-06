@@ -1198,6 +1198,45 @@ ul, ol, dl {
   background: var(--line-soft);
 }
 
+.opt-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--line-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  margin-right: 10px;
+}
+
+.options-list button.right .opt-key {
+  background: var(--green);
+  color: #fff;
+}
+
+.options-list button.wrong .opt-key {
+  background: var(--red);
+  color: #fff;
+}
+
+.options-list button.selected .opt-key {
+  background: var(--blue);
+  color: #fff;
+}
+
+.opt-text {
+  flex: 1;
+}
+
+.options-list button {
+  display: flex;
+  align-items: center;
+}
+
 .options-list button.right {
   border-color: #78b9aa;
   background: var(--green-soft);

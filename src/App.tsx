@@ -1307,14 +1307,35 @@ function CardSession({
   }
 
   const current = session[idx];
-  const cardState = progress?.cards[current.id];
+  const cardState = progress?.cards[current?.id ?? ""];
 
   function rate(grade: CardGrade) {
+    if (!current) return;
     onRateCard(current, grade);
     setStats((s) => ({ ...s, [grade]: s[grade] + 1 }));
     setShowBack(false);
     setIdx((i) => i + 1);
   }
+
+  // Горячие клавиши: Пробел — перевернуть, 1-4 — оценить (после переворота).
+  useEffect(() => {
+    if (!current || idx >= session.length) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        setShowBack((s) => !s);
+      } else if (showBack) {
+        if (e.key === "1") rate("again");
+        else if (e.key === "2") rate("hard");
+        else if (e.key === "3") rate("good");
+        else if (e.key === "4") rate("easy");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [idx, showBack, session, current]);
 
   return (
     <article className="content-panel">
@@ -1328,7 +1349,7 @@ function CardSession({
         <Coach
           tone="info"
           title="Закрепляем определения"
-          text="Сейчас ты пройдёшь сессию из карт. Отвечай честно: «Снова» если не помнишь, «Хорошо» если вспомнил быстро. Чем точнее оценка — тем умнее интервалы повтора."
+          text="Карта появилась — попробуй ответить вслух. Потом тапни (или Space), чтобы увидеть ответ. Оцени честно: 1 — снова, 2 — тяжело, 3 — хорошо, 4 — легко. Чем точнее оценка, тем умнее интервалы повтора."
         />
       )}
       <button
@@ -1412,6 +1433,26 @@ function QuizFlow({
     setPicked(null);
     setIdx((i) => i + 1);
   }
+
+  // Горячие клавиши: 1-4 — выбор ответа, Enter — следующий вопрос.
+  useEffect(() => {
+    if (finished) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      const q = sample[idx];
+      if (!q) return;
+      if (picked === null && e.key >= "1" && e.key <= "9") {
+        const i = Number(e.key) - 1;
+        if (i < q.options.length) pickOption(i);
+      } else if (picked !== null && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        nextQ();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [idx, picked, finished, sample]);
 
   function handleSave() {
     onSaveQuiz(sample, answers);
@@ -1497,7 +1538,7 @@ function QuizFlow({
         <Coach
           tone="warm"
           title="Готов? Тест без подсказок."
-          text="8 случайных вопросов из банка. 60% базовых + 40% сложных (кейсы, сравнения). Не подсматривай — лучше ошибиться и понять."
+          text="8 случайных вопросов из банка. 60% базовых + 40% сложных. Цифры 1-4 — выбор ответа, Enter — следующий вопрос. Не подсматривай — лучше ошибиться и понять."
         />
       )}
       <section className="quiz-item single">
@@ -1511,7 +1552,8 @@ function QuizFlow({
               onClick={() => pickOption(i)}
               disabled={answered}
             >
-              {option}
+              <span className="opt-key">{i + 1}</span>
+              <span className="opt-text">{option}</span>
             </button>
           ))}
         </div>

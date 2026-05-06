@@ -10,7 +10,7 @@ import { section8Tickets } from "./tickets/section8";
 import { section9Tickets } from "./tickets/section9";
 import { extraQuiz, microChecks, ticketLinks } from "./extras";
 import { extraQuiz16, microChecks16 } from "./extras-1-6";
-import { cheatSheets, examinerProvocations, extraPractice, hardQuiz } from "./extras-hard";
+import { cheatSheets, examinerProvocations, extraPractice, extraPracticeMore, hardQuiz } from "./extras-hard";
 import { extraTheory } from "./extras-theory";
 
 function mergeQuiz(...maps: Record<string, typeof extraQuiz[string]>[]): Record<string, typeof extraQuiz[string]> {
@@ -54,7 +54,10 @@ function enrichTicket(ticket: Ticket): Ticket {
   }
 
   // Слить дополнительные практические задачи.
-  const extraTasks = extraPractice[ticket.id] ?? [];
+  const extraTasks = [
+    ...(extraPractice[ticket.id] ?? []),
+    ...(extraPracticeMore[ticket.id] ?? []),
+  ];
   const practice =
     ticket.practice || extraTasks.length > 0
       ? [...(ticket.practice ?? []), ...extraTasks]
