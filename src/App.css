@@ -1314,7 +1314,7 @@ ul, ol, dl {
 
 .bottom-actions {
   position: sticky;
-  bottom: 8px;
+  bottom: max(8px, env(safe-area-inset-bottom));
   z-index: 5;
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1654,7 +1654,7 @@ ul, ol, dl {
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   position: sticky;
-  bottom: 8px;
+  bottom: max(8px, env(safe-area-inset-bottom));
   z-index: 5;
   padding: 8px;
   border-radius: 14px;
@@ -2500,6 +2500,16 @@ ul, ol, dl {
   }
   .mode-tile.full {
     grid-column: span 3;
+  }
+  .section-stack {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .section-stack .eyebrow {
+    grid-column: 1 / -1;
+  }
+  .route-list {
+    grid-template-columns: repeat(2, 1fr);
   }
   .quiz-list {
     gap: 14px;

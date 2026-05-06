@@ -972,6 +972,7 @@ function TicketScreen({
           progress={progress}
           onSaveQuiz={(sample, answers) => onSaveQuiz(ticket.id, sample, answers)}
           onNext={() => goToNext("quiz")}
+          onBackToTheory={() => onModeChange("theory")}
         />
       )}
       {mode === "practice" && hasPractice && (
@@ -1381,11 +1382,13 @@ function QuizFlow({
   progress,
   onSaveQuiz,
   onNext,
+  onBackToTheory,
 }: {
   ticket: Ticket;
   progress: TicketProgress | undefined;
   onSaveQuiz: (sample: QuizQuestion[], answers: Record<string, number>) => void;
   onNext: () => void;
+  onBackToTheory: () => void;
 }) {
   const sample = useMemo(() => sampleQuizMixed(ticket.quiz, 8, 0.4), [ticket.quiz]);
   const [idx, setIdx] = useState(0);
@@ -1416,24 +1419,63 @@ function QuizFlow({
   }
 
   if (finished) {
+    const wrongList = sample.filter((q) => answers[q.id] !== q.answerIndex);
     return (
       <article className="content-panel">
         <div className={`finish-card ${passed ? "passed" : "failed"}`}>
           {passed ? <PartyPopper size={32} /> : <Brain size={32} />}
           <h2>{correctCount} из {total}</h2>
-          <p>{passed ? "Тема засчитана. Хорошая работа." : "Меньше 80% — стоит вернуться к теории и карточкам."}</p>
+          <p>{passed ? "Тема засчитана. Хорошая работа." : "Меньше 80% — нужно повторить."}</p>
           <p className="muted">{Math.round(ratio * 100)}% правильных</p>
         </div>
+
+        {!passed && wrongList.length > 0 && saved && (
+          <section className="study-block">
+            <h3>На что обратить внимание</h3>
+            <ul>
+              {wrongList.slice(0, 5).map((q) => (
+                <li key={q.id}>
+                  <strong>{q.prompt}</strong>
+                  <br />
+                  <span className="muted">{q.explanation}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {!saved && (
           <button type="button" className="primary-button big" onClick={handleSave}>
             <CheckCircle2 size={20} /> Сохранить результат
           </button>
         )}
-        {saved && (
+        {saved && passed && (
           <button type="button" className="primary-button big" onClick={onNext}>
-            {ticket.practice && ticket.practice.length > 0 ? "Дальше: практика" : "Дальше"}{" "}
+            {ticket.practice && ticket.practice.length > 0 ? "Дальше: практика" : "Завершить билет"}{" "}
             <ArrowRight size={20} />
           </button>
+        )}
+        {saved && !passed && (
+          <>
+            <button type="button" className="primary-button big" onClick={onBackToTheory}>
+              <BookOpen size={20} /> Перечитать теорию
+            </button>
+            <button
+              type="button"
+              className="secondary-button big"
+              onClick={() => {
+                setIdx(0);
+                setAnswers({});
+                setPicked(null);
+                setSaved(false);
+              }}
+            >
+              <Repeat2 size={20} /> Пройти тест заново
+            </button>
+            <button type="button" className="secondary-button big" onClick={onNext}>
+              Пропустить и идти дальше <ArrowRight size={20} />
+            </button>
+          </>
         )}
       </article>
     );
