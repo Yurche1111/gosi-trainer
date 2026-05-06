@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.DS_Store
+.vite-dev.log
+.vite-dev.err
+.vite-phone.log
+.vite-phone.err
+.server.log
+.server.err
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts

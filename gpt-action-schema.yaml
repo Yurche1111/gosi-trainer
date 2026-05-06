@@ -1,0 +1,173 @@
+openapi: 3.1.0
+info:
+  title: GOSI Trainer GPT Automation
+  version: 2.0.0
+  description: Полная автоматизация проверки через ChatGPT Plus: GPT получает урок с сайта и сохраняет оценку обратно.
+servers:
+  - url: https://YOUR-DOMAIN.example
+paths:
+  /api/gpt/next-lesson:
+    post:
+      operationId: getNextLessonForStudent
+      summary: Получить следующий урок для ученика.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - studentCode
+                - curriculum
+              properties:
+                studentCode:
+                  type: string
+                  description: Личный код ученика, например CHEM.
+                curriculum:
+                  type: array
+                  description: Краткая учебная модель с разделами и уроками.
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: number
+                      title:
+                        type: string
+                      lessons:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: string
+                            title:
+                              type: string
+                            covers:
+                              type: array
+                              items:
+                                type: string
+                            simple:
+                              type: array
+                              items:
+                                type: string
+                            remember:
+                              type: array
+                              items:
+                                type: string
+                            answerSteps:
+                              type: array
+                              items:
+                                type: string
+                            commonMistakes:
+                              type: array
+                              items:
+                                type: string
+      responses:
+        "200":
+          description: Следующий урок и краткий прогресс.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                  lesson:
+                    type: object
+                  progressSummary:
+                    type: object
+  /api/gpt/save-review:
+    post:
+      operationId: saveOralAnswerReview
+      summary: Сохранить результат проверки устного ответа.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - studentCode
+                - lessonId
+                - review
+              properties:
+                studentCode:
+                  type: string
+                lessonId:
+                  type: string
+                review:
+                  type: object
+                  required:
+                    - score
+                    - verdict
+                    - good
+                    - missing
+                    - wrong
+                    - termsToLearn
+                    - betterAnswer
+                    - nextTask
+                  properties:
+                    score:
+                      type: number
+                      description: Оценка от 0 до 5.
+                    verdict:
+                      type: string
+                    good:
+                      type: array
+                      items:
+                        type: string
+                    missing:
+                      type: array
+                      items:
+                        type: string
+                    wrong:
+                      type: array
+                      items:
+                        type: string
+                    termsToLearn:
+                      type: array
+                      items:
+                        type: string
+                    betterAnswer:
+                      type: string
+                    nextTask:
+                      type: string
+      responses:
+        "200":
+          description: Результат сохранён.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  progressSummary:
+                    type: object
+  /api/gpt/progress:
+    post:
+      operationId: getStudentProgress
+      summary: Получить сохранённый прогресс ученика.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - studentCode
+              properties:
+                studentCode:
+                  type: string
+      responses:
+        "200":
+          description: Прогресс ученика.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  progress:
+                    type: object
+                  progressSummary:
+                    type: object
