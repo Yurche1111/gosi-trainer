@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  ArrowRight,
   BookOpen,
   Brain,
   CalendarDays,
@@ -15,6 +16,8 @@ import {
   Lightbulb,
   Link2,
   ListChecks,
+  PartyPopper,
+  PlayCircle,
   Repeat2,
   Search,
   Settings as SettingsIcon,
@@ -32,7 +35,7 @@ import {
   ticketsBySection,
 } from "./data/studyModel";
 import {
-  bestQuizRatio,
+  buildDrill,
   collectDueCards,
   collectNewCards,
   emptyAppState,
@@ -44,12 +47,17 @@ import {
   getTicketStatus,
   getTotalStats,
   getWeakTickets,
+  groupTheoryIntoSections,
+  nextStep,
+  nextTicket,
+  pickCardSession,
   pickExamTickets,
   pickRandomTickets,
   recordAttempt,
   recordExam,
   sampleQuiz,
 } from "./lib/studyEngine";
+import type { DrillItem, StudyStep } from "./lib/studyEngine";
 import { describeInterval, schedule } from "./lib/srs";
 import type {
   AppState,
@@ -74,8 +82,7 @@ type Screen =
   | { kind: "exam-result"; entry: ExamLogEntry }
   | { kind: "settings" };
 
-type TicketMode = "theory" | "cards" | "quiz" | "practice" | "plan";
-type Answers = Record<string, number>;
+type TicketMode = "theory" | "cards" | "quiz" | "practice" | "plan" | "drill" | "done";
 
 interface SearchHit {
   ticket: Ticket;
@@ -84,14 +91,10 @@ interface SearchHit {
 
 export function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "home" });
-  const [answers, setAnswers] = useState<Answers>({});
-  const [cardIndex, setCardIndex] = useState(0);
-  const [showCardBack, setShowCardBack] = useState(false);
-  const [shownPracticeSolution, setShownPracticeSolution] = useState<Record<string, boolean>>({});
-  const [quizSample, setQuizSample] = useState<QuizQuestion[]>([]);
   const [state, setState] = useState<AppState>(() => loadState());
+  const [examAnswers, setExamAnswers] = useState<Record<string, number>>({});
+  const [examQuizSample, setExamQuizSample] = useState<QuizQuestion[]>([]);
 
-  // Сохранять при каждом изменении
   const persist = (next: AppState) => {
     setState(next);
     try {
@@ -101,7 +104,7 @@ export function App() {
     }
   };
 
-  const updateProgress = (ticketId: string, change: Partial<TicketProgress>) => {
+  function updateProgress(ticketId: string, change: Partial<TicketProgress>) {
     const previous = state.progress[ticketId] ?? emptyTicketProgress();
     persist({
       ...state,
@@ -114,33 +117,61 @@ export function App() {
         },
       },
     });
-  };
+  }
 
-  function setMode(mode: TicketMode | null) {
-    if (screen.kind !== "ticket") return;
-    setScreen({ ...screen, mode });
-    setAnswers({});
-    setCardIndex(0);
-    setShowCardBack(false);
-    if (mode === "quiz") {
-      const ticket = getTicket(screen.ticketId);
-      if (ticket) {
-        setQuizSample(sampleQuiz(ticket.quiz, 8));
-      }
+  function rateCard(ticketId: string, card: Flashcard, grade: CardGrade) {
+    const previous = state.progress[ticketId] ?? emptyTicketProgress();
+    const now = new Date();
+    const { state: cardState } = schedule(previous.cards[card.id], grade, now);
+    persist({
+      ...state,
+      progress: {
+        ...state.progress,
+        [ticketId]: {
+          ...previous,
+          cards: { ...previous.cards, [card.id]: cardState },
+          updatedAt: now.toISOString(),
+        },
+      },
+    });
+  }
+
+  function markCheckPassed(ticketId: string, blockId: string, correct: boolean) {
+    const previous = state.progress[ticketId] ?? emptyTicketProgress();
+    if (correct) {
+      updateProgress(ticketId, {
+        checksPassed: { ...previous.checksPassed, [blockId]: true },
+      });
     }
-    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function saveQuizAttempt(ticketId: string, sample: QuizQuestion[], answers: Record<string, number>) {
+    const correct = sample.filter((q) => answers[q.id] === q.answerIndex).length;
+    const wrong = sample.filter((q) => answers[q.id] !== q.answerIndex).map((q) => q.id);
+    const ratio = sample.length ? correct / sample.length : 0;
+    const previous = state.progress[ticketId] ?? emptyTicketProgress();
+    const updated = recordAttempt(previous, {
+      at: new Date().toISOString(),
+      ratio,
+      correct,
+      total: sample.length,
+      wrongIds: wrong,
+    });
+    persist({
+      ...state,
+      progress: { ...state.progress, [ticketId]: updated },
+    });
+  }
+
+  function completePractice(ticketId: string, taskId: string, done: boolean) {
+    const previous = state.progress[ticketId] ?? emptyTicketProgress();
+    updateProgress(ticketId, {
+      practiceDone: { ...previous.practiceDone, [taskId]: done },
+    });
   }
 
   function openTicket(ticketId: string, mode: TicketMode | null = null) {
     setScreen({ kind: "ticket", ticketId, mode });
-    setAnswers({});
-    setCardIndex(0);
-    setShowCardBack(false);
-    setShownPracticeSolution({});
-    if (mode === "quiz") {
-      const ticket = getTicket(ticketId);
-      if (ticket) setQuizSample(sampleQuiz(ticket.quiz, 8));
-    }
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
@@ -172,9 +203,9 @@ export function App() {
       current: 0,
       results: [],
     });
-    setAnswers({});
+    setExamAnswers({});
     const first = examTickets[0];
-    if (first) setQuizSample(sampleQuiz(first.quiz, 8));
+    if (first) setExamQuizSample(sampleQuiz(first.quiz, 8));
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
@@ -182,17 +213,17 @@ export function App() {
     if (screen.kind !== "exam") return;
     const ticket = getTicket(screen.ticketIds[screen.current]);
     if (!ticket) return;
-    const sample = quizSample.length ? quizSample : ticket.quiz;
-    const correct = sample.filter((q) => answers[q.id] === q.answerIndex).length;
+    const sample = examQuizSample.length ? examQuizSample : ticket.quiz;
+    const correct = sample.filter((q) => examAnswers[q.id] === q.answerIndex).length;
     const ratio = sample.length ? correct / sample.length : 0;
     const newResults = [...screen.results, ratio];
 
     if (screen.current + 1 < screen.ticketIds.length) {
       const nextIdx = screen.current + 1;
-      const nextTicket = getTicket(screen.ticketIds[nextIdx]);
+      const nextT = getTicket(screen.ticketIds[nextIdx]);
       setScreen({ ...screen, current: nextIdx, results: newResults });
-      setAnswers({});
-      if (nextTicket) setQuizSample(sampleQuiz(nextTicket.quiz, 8));
+      setExamAnswers({});
+      if (nextT) setExamQuizSample(sampleQuiz(nextT.quiz, 8));
       window.scrollTo({ top: 0, behavior: "auto" });
     } else {
       const entry: ExamLogEntry = {
@@ -204,33 +235,6 @@ export function App() {
       persist({ ...state, exams: recordExam(state.exams, entry) });
       setScreen({ kind: "exam-result", entry });
       window.scrollTo({ top: 0, behavior: "auto" });
-    }
-  }
-
-  function rateCard(ticketId: string, card: Flashcard, grade: CardGrade) {
-    const previous = state.progress[ticketId] ?? emptyTicketProgress();
-    const now = new Date();
-    const { state: cardState } = schedule(previous.cards[card.id], grade, now);
-    persist({
-      ...state,
-      progress: {
-        ...state.progress,
-        [ticketId]: {
-          ...previous,
-          cards: { ...previous.cards, [card.id]: cardState },
-          updatedAt: now.toISOString(),
-        },
-      },
-    });
-    setShowCardBack(false);
-  }
-
-  function markCheckPassed(ticketId: string, blockId: string, correct: boolean) {
-    const previous = state.progress[ticketId] ?? emptyTicketProgress();
-    if (correct) {
-      updateProgress(ticketId, {
-        checksPassed: { ...previous.checksPassed, [blockId]: true },
-      });
     }
   }
 
@@ -273,62 +277,22 @@ export function App() {
       )}
       {screen.kind === "ticket" && (
         <TicketScreen
+          key={screen.ticketId + ":" + (screen.mode ?? "menu")}
           ticketId={screen.ticketId}
           mode={screen.mode}
           state={state}
-          answers={answers}
-          cardIndex={cardIndex}
-          showCardBack={showCardBack}
-          shownSolutions={shownPracticeSolution}
-          quizSample={quizSample}
-          onModeChange={setMode}
+          onModeChange={(mode) => setScreen({ kind: "ticket", ticketId: screen.ticketId, mode })}
           onBackToSection={() => {
             const ticket = getTicket(screen.ticketId);
-            setScreen(
-              ticket ? { kind: "section", sectionId: ticket.sectionId } : { kind: "home" },
-            );
+            setScreen(ticket ? { kind: "section", sectionId: ticket.sectionId } : { kind: "home" });
           }}
+          onOpenTicket={(id, mode) => openTicket(id, mode)}
           onMarkRead={(id) => updateProgress(id, { read: true })}
-          onCardIndexChange={(i) => {
-            setCardIndex(i);
-            setShowCardBack(false);
-          }}
-          onToggleCard={() => setShowCardBack((s) => !s)}
           onRateCard={rateCard}
-          onChooseAnswer={(q, idx) => setAnswers((s) => ({ ...s, [q.id]: idx }))}
-          onSaveQuiz={(ticket) => {
-            const sample = quizSample.length ? quizSample : ticket.quiz;
-            const correct = sample.filter((q) => answers[q.id] === q.answerIndex).length;
-            const wrong = sample.filter((q) => answers[q.id] !== q.answerIndex).map((q) => q.id);
-            const ratio = sample.length ? correct / sample.length : 0;
-            const previous = state.progress[ticket.id] ?? emptyTicketProgress();
-            const updated = recordAttempt(previous, {
-              at: new Date().toISOString(),
-              ratio,
-              correct,
-              total: sample.length,
-              wrongIds: wrong,
-            });
-            persist({
-              ...state,
-              progress: { ...state.progress, [ticket.id]: updated },
-            });
-          }}
-          onRetryQuiz={(ticket) => {
-            setAnswers({});
-            setQuizSample(sampleQuiz(ticket.quiz, 8));
-          }}
-          onTogglePractice={(taskId) =>
-            setShownPracticeSolution((s) => ({ ...s, [taskId]: !s[taskId] }))
-          }
-          onCompletePractice={(ticketId, task, done) => {
-            const previous = state.progress[ticketId] ?? emptyTicketProgress();
-            updateProgress(ticketId, {
-              practiceDone: { ...previous.practiceDone, [task.id]: done },
-            });
-          }}
           onCheckAnswer={markCheckPassed}
-          onOpenRelated={(id) => openTicket(id)}
+          onSaveQuiz={saveQuizAttempt}
+          onCompletePractice={completePractice}
+          onHome={() => setScreen({ kind: "home" })}
         />
       )}
       {screen.kind === "review" && (
@@ -343,9 +307,9 @@ export function App() {
         <ExamScreen
           ticketIds={screen.ticketIds}
           current={screen.current}
-          quizSample={quizSample}
-          answers={answers}
-          onChooseAnswer={(q, idx) => setAnswers((s) => ({ ...s, [q.id]: idx }))}
+          quizSample={examQuizSample}
+          answers={examAnswers}
+          onChooseAnswer={(q, idx) => setExamAnswers((s) => ({ ...s, [q.id]: idx }))}
           onNext={nextExamTicket}
           onExit={() => setScreen({ kind: "home" })}
         />
@@ -454,7 +418,6 @@ function HomeScreen({
 
   return (
     <main className="home-screen">
-      {/* Сегодняшний план */}
       <section className="daily-card">
         <div className="daily-head">
           <p className="eyebrow">Сегодня</p>
@@ -488,7 +451,6 @@ function HomeScreen({
             tone={dailyPlan.weakCount > 0 ? "danger" : "muted"}
           />
         </div>
-
         <div className="daily-suggestion">
           <p className="eyebrow">Следующий билет</p>
           <h2>
@@ -501,8 +463,6 @@ function HomeScreen({
           </button>
         </div>
       </section>
-
-      {/* Поиск */}
       <section className="search-panel">
         <div className="search-input">
           <Search size={20} />
@@ -536,17 +496,11 @@ function HomeScreen({
           </div>
         )}
       </section>
-
-      {/* Действия */}
       <section className="action-grid">
         <ActionTile
           icon={<Repeat2 size={22} />}
           label="Повторение"
-          sub={
-            dailyPlan.reviewCount > 0
-              ? `${dailyPlan.reviewCount} карт ждут`
-              : "всё освежено"
-          }
+          sub={dailyPlan.reviewCount > 0 ? `${dailyPlan.reviewCount} карт ждут` : "всё освежено"}
           onClick={onReview}
           accent={dailyPlan.reviewCount > 0}
           disabled={dailyPlan.reviewCount === 0}
@@ -571,8 +525,6 @@ function HomeScreen({
           onClick={onExam}
         />
       </section>
-
-      {/* Прогресс */}
       <section className="progress-panel">
         <div>
           <p className="eyebrow">Прогресс</p>
@@ -584,26 +536,12 @@ function HomeScreen({
           <span style={{ width: `${masteredPercent}%` }} />
         </div>
         <div className="progress-stats">
-          <span>
-            <b>{masteredPercent}%</b>
-            <i>готово</i>
-          </span>
-          <span>
-            <b>{totalStats.weak}</b>
-            <i>слабые</i>
-          </span>
-          <span>
-            <b>{totalStats.scorePercent}%</b>
-            <i>средний тест</i>
-          </span>
-          <span>
-            <b>{totalStats.avgReadiness}%</b>
-            <i>в среднем</i>
-          </span>
+          <span><b>{masteredPercent}%</b><i>готово</i></span>
+          <span><b>{totalStats.weak}</b><i>слабые</i></span>
+          <span><b>{totalStats.scorePercent}%</b><i>средний тест</i></span>
+          <span><b>{totalStats.avgReadiness}%</b><i>в среднем</i></span>
         </div>
       </section>
-
-      {/* Разделы */}
       <section className="section-stack">
         <p className="eyebrow">Разделы</p>
         {sections.map((section) => {
@@ -620,17 +558,11 @@ function HomeScreen({
               <span className="section-number">{section.number}</span>
               <span className="section-body">
                 <strong>{section.shortTitle}</strong>
-                <small>
-                  {tickets.length} билетов · {section.kind === "case" ? "практика" : "теория"}
-                </small>
-                <span className="inline-progress">
-                  <i style={{ width: `${percent}%` }} />
-                </span>
+                <small>{tickets.length} билетов · {section.kind === "case" ? "практика" : "теория"}</small>
+                <span className="inline-progress"><i style={{ width: `${percent}%` }} /></span>
               </span>
               <span className="section-meta">
-                <em>
-                  {stats.mastered}/{stats.total}
-                </em>
+                <em>{stats.mastered}/{stats.total}</em>
                 <ChevronRight size={18} />
               </span>
             </button>
@@ -655,13 +587,21 @@ function DailyStat({
   onClick?: () => void;
 }) {
   const className = `daily-stat tone-${tone}${onClick ? " clickable" : ""}`;
-  const Tag = onClick ? "button" : "div";
+  if (onClick) {
+    return (
+      <button type="button" className={className} onClick={onClick}>
+        <span className="daily-icon">{icon}</span>
+        <strong>{value}</strong>
+        <small>{label}</small>
+      </button>
+    );
+  }
   return (
-    <Tag type={onClick ? "button" : undefined} className={className} onClick={onClick}>
+    <div className={className}>
       <span className="daily-icon">{icon}</span>
       <strong>{value}</strong>
       <small>{label}</small>
-    </Tag>
+    </div>
   );
 }
 
@@ -713,8 +653,7 @@ function SectionScreen({
   return (
     <main className="study-screen">
       <button type="button" className="back-button" onClick={onBack}>
-        <ArrowLeft size={18} />
-        Все разделы
+        <ArrowLeft size={18} /> Все разделы
       </button>
       <section className="intro-panel">
         <p className="eyebrow">
@@ -770,50 +709,36 @@ function SectionScreen({
   );
 }
 
+// ─────────────────────────────────────────────
+// TicketScreen — главный экран с пошаговым флоу
+// ─────────────────────────────────────────────
+
 function TicketScreen({
   ticketId,
   mode,
   state,
-  answers,
-  cardIndex,
-  showCardBack,
-  shownSolutions,
-  quizSample,
   onModeChange,
   onBackToSection,
+  onOpenTicket,
   onMarkRead,
-  onCardIndexChange,
-  onToggleCard,
   onRateCard,
-  onChooseAnswer,
-  onSaveQuiz,
-  onRetryQuiz,
-  onTogglePractice,
-  onCompletePractice,
   onCheckAnswer,
-  onOpenRelated,
+  onSaveQuiz,
+  onCompletePractice,
+  onHome,
 }: {
   ticketId: string;
   mode: TicketMode | null;
   state: AppState;
-  answers: Answers;
-  cardIndex: number;
-  showCardBack: boolean;
-  shownSolutions: Record<string, boolean>;
-  quizSample: QuizQuestion[];
   onModeChange: (mode: TicketMode | null) => void;
   onBackToSection: () => void;
+  onOpenTicket: (id: string, mode: TicketMode | null) => void;
   onMarkRead: (ticketId: string) => void;
-  onCardIndexChange: (index: number) => void;
-  onToggleCard: () => void;
   onRateCard: (ticketId: string, card: Flashcard, grade: CardGrade) => void;
-  onChooseAnswer: (question: QuizQuestion, idx: number) => void;
-  onSaveQuiz: (ticket: Ticket) => void;
-  onRetryQuiz: (ticket: Ticket) => void;
-  onTogglePractice: (taskId: string) => void;
-  onCompletePractice: (ticketId: string, task: PracticeTask, done: boolean) => void;
   onCheckAnswer: (ticketId: string, blockId: string, correct: boolean) => void;
-  onOpenRelated: (id: string) => void;
+  onSaveQuiz: (ticketId: string, sample: QuizQuestion[], answers: Record<string, number>) => void;
+  onCompletePractice: (ticketId: string, taskId: string, done: boolean) => void;
+  onHome: () => void;
 }) {
   const ticket = getTicket(ticketId);
   if (!ticket) {
@@ -831,46 +756,37 @@ function TicketScreen({
     .map((id) => getTicket(id))
     .filter(Boolean) as Ticket[];
 
+  // Меню билета
   if (mode === null) {
     return (
       <main className="study-screen">
         <button type="button" className="back-button" onClick={onBackToSection}>
-          <ArrowLeft size={18} />К билетам раздела
+          <ArrowLeft size={18} /> К билетам раздела
         </button>
         <section className="ticket-hero">
           <p className="eyebrow">
             {section.shortTitle} · сложность {"●".repeat(ticket.difficulty)}
             {"○".repeat(3 - ticket.difficulty)}
           </p>
-          <h2>
-            {ticket.number}. {ticket.title}
-          </h2>
+          <h2>{ticket.number}. {ticket.title}</h2>
           <p>{ticket.oneLiner}</p>
           <div className="readiness-bar">
             <div className="progress-bar">
               <span style={{ width: `${Math.round(status.readiness * 100)}%` }} />
             </div>
-            <span>
-              {Math.round(status.readiness * 100)}% готовности
-            </span>
+            <span>{Math.round(status.readiness * 100)}% готовности</span>
           </div>
           <div className="ticket-metrics">
             <span>{status.label}</span>
-            <span>
-              тест {Math.round(status.bestRatio * 100)}%
-            </span>
-            <span>
-              {status.matureCards}/{status.totalCards} выучено
-            </span>
+            <span>тест {Math.round(status.bestRatio * 100)}%</span>
+            <span>{status.matureCards}/{status.totalCards} выучено</span>
             {status.dueCards > 0 && <span className="metric-warm">⌚ {status.dueCards} к повтору</span>}
-            {hasPractice && (
-              <span>
-                задачи {status.practiceDone}/{status.practiceTotal}
-              </span>
-            )}
+            {hasPractice && <span>задачи {status.practiceDone}/{status.practiceTotal}</span>}
           </div>
         </section>
-
+        <button type="button" className="primary-button big" onClick={() => onModeChange("theory")}>
+          <ArrowRight size={20} /> Начать обучение
+        </button>
         <section className="mode-grid">
           <ModeTile
             icon={<BookOpen size={26} />}
@@ -896,9 +812,7 @@ function TicketScreen({
                   ? `${status.dueCards} к повтору`
                   : `${status.matureCards}/${status.totalCards} выучено`
             }
-            done={
-              status.totalCards > 0 && status.matureCards >= Math.ceil(status.totalCards * 0.7)
-            }
+            done={status.totalCards > 0 && status.matureCards >= Math.ceil(status.totalCards * 0.7)}
             onClick={() => onModeChange("cards")}
             warm={status.dueCards > 0}
           />
@@ -920,11 +834,16 @@ function TicketScreen({
               sub={`${status.practiceDone}/${status.practiceTotal} решено`}
               done={status.practiceTotal > 0 && status.practiceDone === status.practiceTotal}
               onClick={() => onModeChange("practice")}
-              full
             />
           )}
+          <ModeTile
+            icon={<PlayCircle size={26} />}
+            title="Прогон"
+            sub="быстрая проверка"
+            onClick={() => onModeChange("drill")}
+            full
+          />
         </section>
-
         {related.length > 0 && (
           <section className="related-panel">
             <p className="eyebrow">
@@ -936,7 +855,7 @@ function TicketScreen({
                   key={r.id}
                   type="button"
                   className="related-item"
-                  onClick={() => onOpenRelated(r.id)}
+                  onClick={() => onOpenTicket(r.id, null)}
                 >
                   <span className="ticket-num">{r.number}</span>
                   <span>{r.title}</span>
@@ -950,56 +869,76 @@ function TicketScreen({
     );
   }
 
+  // Переход к следующему шагу или экран «билет освоен»
+  function goToNext(currentStep: StudyStep) {
+    const next = nextStep(ticket!, currentStep);
+    if (next) {
+      onModeChange(next as TicketMode);
+    } else {
+      onModeChange("done");
+    }
+  }
+
   return (
     <main className="study-screen">
       <button type="button" className="back-button" onClick={() => onModeChange(null)}>
-        <ArrowLeft size={18} />К билету {ticket.number}
+        <ArrowLeft size={18} /> К билету {ticket.number}
       </button>
       {mode === "theory" && (
-        <TheoryPanel
+        <TheoryFlow
           ticket={ticket}
           progress={progress}
-          read={status.read}
           onMarkRead={() => onMarkRead(ticket.id)}
           onCheckAnswer={(blockId, correct) => onCheckAnswer(ticket.id, blockId, correct)}
+          onNext={() => goToNext("theory")}
         />
       )}
-      {mode === "plan" && <ExamPlanPanel ticket={ticket} />}
+      {mode === "plan" && (
+        <ExamPlanPanel ticket={ticket} onNext={() => onModeChange(null)} />
+      )}
       {mode === "cards" && (
-        <CardTrainer
+        <CardSession
           ticket={ticket}
           progress={progress}
-          cardIndex={cardIndex}
-          showBack={showCardBack}
-          onCardIndexChange={onCardIndexChange}
-          onToggleCard={onToggleCard}
-          onRateCard={(card, grade) => {
-            onRateCard(ticket.id, card, grade);
-            // двигаемся вперёд после оценки
-            const total = ticket.flashcards.length;
-            onCardIndexChange(Math.min(cardIndex + 1, total - 1));
-          }}
+          onRateCard={(card, grade) => onRateCard(ticket.id, card, grade)}
+          onNext={() => goToNext("cards")}
         />
       )}
       {mode === "quiz" && (
-        <QuizPanel
+        <QuizFlow
           ticket={ticket}
-          quizSample={quizSample.length ? quizSample : ticket.quiz}
-          answers={answers}
-          attempts={status.attempts}
-          bestRatio={status.bestRatio}
-          onChooseAnswer={onChooseAnswer}
-          onSave={() => onSaveQuiz(ticket)}
-          onRetry={() => onRetryQuiz(ticket)}
+          progress={progress}
+          onSaveQuiz={(sample, answers) => onSaveQuiz(ticket.id, sample, answers)}
+          onNext={() => goToNext("quiz")}
         />
       )}
       {mode === "practice" && hasPractice && (
-        <PracticePanel
+        <PracticeFlow
           ticket={ticket}
-          shownSolutions={shownSolutions}
           progress={progress}
-          onToggle={onTogglePractice}
-          onComplete={onCompletePractice}
+          onComplete={(taskId, done) => onCompletePractice(ticket.id, taskId, done)}
+          onNext={() => goToNext("practice")}
+        />
+      )}
+      {mode === "drill" && (
+        <DrillFlow
+          ticket={ticket}
+          progress={progress}
+          onRateCard={(card, grade) => onRateCard(ticket.id, card, grade)}
+          onCompleteAt={() => undefined}
+          onBack={() => onModeChange(null)}
+        />
+      )}
+      {mode === "done" && (
+        <TicketDoneScreen
+          ticket={ticket}
+          onNextTicket={() => {
+            const nt = nextTicket(allTickets, ticket.id);
+            if (nt) onOpenTicket(nt.id, "theory");
+            else onHome();
+          }}
+          onBackToMenu={() => onModeChange(null)}
+          onHome={onHome}
         />
       )}
     </main>
@@ -1041,6 +980,694 @@ function ModeTile({
   );
 }
 
+// ─────────────────────────────────────────────
+// Теория: пошаговая по секциям
+// ─────────────────────────────────────────────
+
+function TheoryFlow({
+  ticket,
+  progress,
+  onMarkRead,
+  onCheckAnswer,
+  onNext,
+}: {
+  ticket: Ticket;
+  progress: TicketProgress | undefined;
+  onMarkRead: () => void;
+  onCheckAnswer: (blockId: string, correct: boolean) => void;
+  onNext: () => void;
+}) {
+  const sectionsList = useMemo(() => groupTheoryIntoSections(ticket.theory), [ticket.theory]);
+  // +1 «секция» — финальная: глоссарий + подводные камни.
+  const totalSteps = sectionsList.length + 1;
+  const [step, setStep] = useState(0);
+  const isLast = step === totalSteps - 1;
+  const stepLabel = `${step + 1} / ${totalSteps}`;
+
+  function go(delta: number) {
+    setStep((s) => Math.max(0, Math.min(totalSteps - 1, s + delta)));
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function handleFinish() {
+    onMarkRead();
+    onNext();
+  }
+
+  return (
+    <article className="content-panel">
+      <div className="step-progress">
+        <div className="step-bar">
+          <span style={{ width: `${((step + 1) / totalSteps) * 100}%` }} />
+        </div>
+        <span className="step-counter">Часть {stepLabel}</span>
+      </div>
+
+      {step < sectionsList.length ? (
+        <>
+          <h2 className="step-title">{sectionsList[step].heading}</h2>
+          {sectionsList[step].blocks.map((block, idx) => (
+            <BlockRenderer
+              key={`${ticket.id}-s${step}-${idx}`}
+              block={block}
+              alreadyPassed={
+                block.kind === "check" && progress?.checksPassed[block.id] ? true : false
+              }
+              onCheckAnswer={onCheckAnswer}
+            />
+          ))}
+        </>
+      ) : (
+        <>
+          <h2 className="step-title">Закрепление</h2>
+          {ticket.glossary.length > 0 && (
+            <details className="study-block collapsible" open>
+              <summary>
+                <h3>Глоссарий ({ticket.glossary.length})</h3>
+              </summary>
+              <dl className="glossary">
+                {ticket.glossary.map((g) => (
+                  <div key={g.term}>
+                    <dt>{g.term}</dt>
+                    <dd>{g.meaning}</dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+          )}
+          <details className="study-block collapsible" open>
+            <summary>
+              <h3>Где обычно проваливают</h3>
+            </summary>
+            <ul>
+              {ticket.pitfalls.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          </details>
+        </>
+      )}
+
+      <div className="bottom-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => go(-1)}
+          disabled={step === 0}
+        >
+          <ArrowLeft size={18} /> Назад
+        </button>
+        {isLast ? (
+          <button type="button" className="primary-button" onClick={handleFinish}>
+            <ArrowRight size={18} /> Дальше: карточки
+          </button>
+        ) : (
+          <button type="button" className="primary-button" onClick={() => go(1)}>
+            Дальше <ArrowRight size={18} />
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function ExamPlanPanel({ ticket, onNext }: { ticket: Ticket; onNext: () => void }) {
+  return (
+    <article className="content-panel">
+      <section className="study-block">
+        <h3>Вступление</h3>
+        <p>{ticket.examPlan.opening}</p>
+      </section>
+      <section className="study-block">
+        <h3>План ответа</h3>
+        <ol>
+          {ticket.examPlan.steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      </section>
+      <section className="study-block">
+        <h3>Пример</h3>
+        <p>{ticket.examPlan.example}</p>
+      </section>
+      <section className="study-block">
+        <h3>Финал</h3>
+        <p>{ticket.examPlan.closing}</p>
+      </section>
+      <button type="button" className="primary-button big" onClick={onNext}>
+        <CheckCircle2 size={20} /> Понятно
+      </button>
+    </article>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Сессия карт
+// ─────────────────────────────────────────────
+
+function CardSession({
+  ticket,
+  progress,
+  onRateCard,
+  onNext,
+}: {
+  ticket: Ticket;
+  progress: TicketProgress | undefined;
+  onRateCard: (card: Flashcard, grade: CardGrade) => void;
+  onNext: () => void;
+}) {
+  const session = useMemo(() => pickCardSession(ticket, progress), [ticket, progress]);
+  const [idx, setIdx] = useState(0);
+  const [showBack, setShowBack] = useState(false);
+  const [stats, setStats] = useState<{ again: number; hard: number; good: number; easy: number }>({
+    again: 0,
+    hard: 0,
+    good: 0,
+    easy: 0,
+  });
+
+  if (session.length === 0) {
+    return (
+      <article className="content-panel">
+        <div className="empty-state">
+          <Layers3 size={28} />
+          <h2>Карточек нет</h2>
+          <p>В этом билете не нашлось карт для тренировки.</p>
+          <button type="button" className="primary-button" onClick={onNext}>
+            Дальше: тест <ArrowRight size={18} />
+          </button>
+        </div>
+      </article>
+    );
+  }
+
+  if (idx >= session.length) {
+    const total = stats.again + stats.hard + stats.good + stats.easy;
+    return (
+      <article className="content-panel">
+        <div className="finish-card">
+          <PartyPopper size={32} />
+          <h2>Сессия пройдена</h2>
+          <p>Прошли {total} карточек.</p>
+          <div className="finish-grid">
+            <span className="tone-easy">Легко: <b>{stats.easy}</b></span>
+            <span className="tone-good">Хорошо: <b>{stats.good}</b></span>
+            <span className="tone-hard">Тяжело: <b>{stats.hard}</b></span>
+            <span className="tone-again">Снова: <b>{stats.again}</b></span>
+          </div>
+        </div>
+        <button type="button" className="primary-button big" onClick={onNext}>
+          Дальше: тест <ArrowRight size={20} />
+        </button>
+      </article>
+    );
+  }
+
+  const current = session[idx];
+  const cardState = progress?.cards[current.id];
+
+  function rate(grade: CardGrade) {
+    onRateCard(current, grade);
+    setStats((s) => ({ ...s, [grade]: s[grade] + 1 }));
+    setShowBack(false);
+    setIdx((i) => i + 1);
+  }
+
+  return (
+    <article className="content-panel">
+      <div className="step-progress">
+        <div className="step-bar">
+          <span style={{ width: `${((idx + 1) / session.length) * 100}%` }} />
+        </div>
+        <span className="step-counter">Карта {idx + 1} / {session.length}</span>
+      </div>
+      <button
+        type="button"
+        className={`memory-card ${showBack ? "flipped" : ""}`}
+        onClick={() => setShowBack((s) => !s)}
+      >
+        <span>{showBack ? "ответ" : "вопрос"}</span>
+        <h3>{showBack ? current.back : current.front}</h3>
+        <small className="tap-hint">{showBack ? "тап — скрыть" : "тап — показать ответ"}</small>
+      </button>
+      <div className="srs-actions">
+        <SrsButton tone="again" label="Снова" hint="<10 мин" onClick={() => rate("again")} />
+        <SrsButton tone="hard" label="Тяжело" hint={describeInterval(scheduleHint(cardState, "hard"))} onClick={() => rate("hard")} />
+        <SrsButton tone="good" label="Хорошо" hint={describeInterval(scheduleHint(cardState, "good"))} onClick={() => rate("good")} />
+        <SrsButton tone="easy" label="Легко" hint={describeInterval(scheduleHint(cardState, "easy"))} onClick={() => rate("easy")} />
+      </div>
+    </article>
+  );
+}
+
+function scheduleHint(state: NonNullable<TicketProgress["cards"][string]> | undefined, grade: CardGrade): number {
+  return schedule(state, grade).intervalDays;
+}
+
+function SrsButton({
+  tone,
+  label,
+  hint,
+  onClick,
+}: {
+  tone: "again" | "hard" | "good" | "easy";
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className={`srs-button tone-${tone}`} onClick={onClick}>
+      <strong>{label}</strong>
+      <small>{hint}</small>
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Тест: по одному вопросу + финальный экран
+// ─────────────────────────────────────────────
+
+function QuizFlow({
+  ticket,
+  progress,
+  onSaveQuiz,
+  onNext,
+}: {
+  ticket: Ticket;
+  progress: TicketProgress | undefined;
+  onSaveQuiz: (sample: QuizQuestion[], answers: Record<string, number>) => void;
+  onNext: () => void;
+}) {
+  const sample = useMemo(() => sampleQuiz(ticket.quiz, 8), [ticket.quiz]);
+  const [idx, setIdx] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [picked, setPicked] = useState<number | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const total = sample.length;
+  const finished = idx >= total;
+  const correctCount = sample.filter((q) => answers[q.id] === q.answerIndex).length;
+  const ratio = total ? correctCount / total : 0;
+  const passed = ratio >= 0.8;
+
+  function pickOption(i: number) {
+    if (picked !== null) return;
+    setPicked(i);
+    setAnswers((a) => ({ ...a, [sample[idx].id]: i }));
+  }
+
+  function nextQ() {
+    setPicked(null);
+    setIdx((i) => i + 1);
+  }
+
+  function handleSave() {
+    onSaveQuiz(sample, answers);
+    setSaved(true);
+  }
+
+  if (finished) {
+    return (
+      <article className="content-panel">
+        <div className={`finish-card ${passed ? "passed" : "failed"}`}>
+          {passed ? <PartyPopper size={32} /> : <Brain size={32} />}
+          <h2>{correctCount} из {total}</h2>
+          <p>{passed ? "Тема засчитана. Хорошая работа." : "Меньше 80% — стоит вернуться к теории и карточкам."}</p>
+          <p className="muted">{Math.round(ratio * 100)}% правильных</p>
+        </div>
+        {!saved && (
+          <button type="button" className="primary-button big" onClick={handleSave}>
+            <CheckCircle2 size={20} /> Сохранить результат
+          </button>
+        )}
+        {saved && (
+          <button type="button" className="primary-button big" onClick={onNext}>
+            {ticket.practice && ticket.practice.length > 0 ? "Дальше: практика" : "Дальше"}{" "}
+            <ArrowRight size={20} />
+          </button>
+        )}
+      </article>
+    );
+  }
+
+  const q = sample[idx];
+  const answered = picked !== null;
+  const isCorrect = picked === q.answerIndex;
+
+  return (
+    <article className="content-panel">
+      <div className="step-progress">
+        <div className="step-bar">
+          <span style={{ width: `${((idx + 1) / total) * 100}%` }} />
+        </div>
+        <span className="step-counter">Вопрос {idx + 1} / {total}</span>
+      </div>
+      <section className="quiz-item single">
+        <h3>{q.prompt}</h3>
+        <div className="options-list">
+          {q.options.map((option, i) => (
+            <button
+              key={`${q.id}-${i}`}
+              type="button"
+              className={getOptionClass(answered, isCorrect, picked ?? undefined, q.answerIndex, i)}
+              onClick={() => pickOption(i)}
+              disabled={answered}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+        {answered && (
+          <p className={isCorrect ? "explanation correct" : "explanation wrong"}>
+            {isCorrect ? "Верно. " : "Ошибка. "}
+            {q.explanation}
+          </p>
+        )}
+      </section>
+      <div className="bottom-actions single">
+        <button
+          type="button"
+          className="primary-button"
+          onClick={nextQ}
+          disabled={!answered}
+        >
+          {idx + 1 < total ? "Следующий вопрос" : "Завершить тест"} <ArrowRight size={18} />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Практика: по одной задаче
+// ─────────────────────────────────────────────
+
+function PracticeFlow({
+  ticket,
+  progress,
+  onComplete,
+  onNext,
+}: {
+  ticket: Ticket;
+  progress: TicketProgress | undefined;
+  onComplete: (taskId: string, done: boolean) => void;
+  onNext: () => void;
+}) {
+  const tasks = ticket.practice ?? [];
+  const [idx, setIdx] = useState(0);
+  const [showSolution, setShowSolution] = useState(false);
+
+  if (idx >= tasks.length) {
+    return (
+      <article className="content-panel">
+        <div className="finish-card passed">
+          <PartyPopper size={32} />
+          <h2>Все задачи разобраны</h2>
+          <p>Закрепил материал на расчётных примерах.</p>
+        </div>
+        <button type="button" className="primary-button big" onClick={onNext}>
+          Завершить билет <ArrowRight size={20} />
+        </button>
+      </article>
+    );
+  }
+
+  const task = tasks[idx];
+  const done = Boolean(progress?.practiceDone[task.id]);
+
+  return (
+    <article className="content-panel">
+      <div className="step-progress">
+        <div className="step-bar">
+          <span style={{ width: `${((idx + 1) / tasks.length) * 100}%` }} />
+        </div>
+        <span className="step-counter">Задача {idx + 1} / {tasks.length}</span>
+      </div>
+      <section className="practice-card">
+        <div className="practice-head">
+          <h3>{task.title}</h3>
+          {done && <span className="done-badge">решено</span>}
+        </div>
+        <p className="practice-problem">{task.problem}</p>
+        {task.hint && (
+          <p className="practice-hint">
+            <strong>Подсказка.</strong> {task.hint}
+          </p>
+        )}
+        {!showSolution && (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setShowSolution(true)}
+          >
+            Показать решение
+          </button>
+        )}
+        {showSolution && (
+          <div className="practice-solution">
+            <h4>Решение</h4>
+            <ol>
+              {task.solution.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+            <p className="practice-answer">
+              <strong>Ответ.</strong> {task.answer}
+            </p>
+          </div>
+        )}
+      </section>
+      <div className="bottom-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => {
+            onComplete(task.id, !done);
+          }}
+        >
+          {done ? "Снять отметку" : "Я разобрал"}
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => {
+            setShowSolution(false);
+            setIdx((i) => i + 1);
+          }}
+        >
+          {idx + 1 < tasks.length ? "Следующая задача" : "Завершить"} <ArrowRight size={18} />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Прогон: 3 карты + 3 вопроса + 1 практика
+// ─────────────────────────────────────────────
+
+function DrillFlow({
+  ticket,
+  progress,
+  onRateCard,
+  onBack,
+}: {
+  ticket: Ticket;
+  progress: TicketProgress | undefined;
+  onRateCard: (card: Flashcard, grade: CardGrade) => void;
+  onCompleteAt: (taskId: string, done: boolean) => void;
+  onBack: () => void;
+}) {
+  const items = useMemo<DrillItem[]>(() => buildDrill(ticket, progress), [ticket, progress]);
+  const [idx, setIdx] = useState(0);
+  const [showBack, setShowBack] = useState(false);
+  const [picked, setPicked] = useState<number | null>(null);
+  const [showSolution, setShowSolution] = useState(false);
+
+  if (items.length === 0) {
+    return (
+      <article className="content-panel">
+        <div className="empty-state">
+          <PlayCircle size={28} />
+          <h2>Прогон недоступен</h2>
+          <p>Нет данных для быстрой проверки.</p>
+          <button type="button" className="primary-button" onClick={onBack}>
+            Назад
+          </button>
+        </div>
+      </article>
+    );
+  }
+
+  if (idx >= items.length) {
+    return (
+      <article className="content-panel">
+        <div className="finish-card passed">
+          <PartyPopper size={32} />
+          <h2>Прогон завершён</h2>
+          <p>Закрепил билет за 5 минут.</p>
+        </div>
+        <button type="button" className="primary-button big" onClick={onBack}>
+          В меню билета <ArrowRight size={20} />
+        </button>
+      </article>
+    );
+  }
+
+  const item = items[idx];
+
+  function nextItem() {
+    setShowBack(false);
+    setPicked(null);
+    setShowSolution(false);
+    setIdx((i) => i + 1);
+  }
+
+  return (
+    <article className="content-panel">
+      <div className="step-progress">
+        <div className="step-bar">
+          <span style={{ width: `${((idx + 1) / items.length) * 100}%` }} />
+        </div>
+        <span className="step-counter">
+          {idx + 1} / {items.length} ·{" "}
+          {item.kind === "card" ? "карта" : item.kind === "quiz" ? "вопрос" : "задача"}
+        </span>
+      </div>
+      {item.kind === "card" && item.card && (
+        <>
+          <button
+            type="button"
+            className={`memory-card ${showBack ? "flipped" : ""}`}
+            onClick={() => setShowBack((s) => !s)}
+          >
+            <span>{showBack ? "ответ" : "вопрос"}</span>
+            <h3>{showBack ? item.card.back : item.card.front}</h3>
+            <small className="tap-hint">{showBack ? "тап — скрыть" : "тап — показать ответ"}</small>
+          </button>
+          <div className="srs-actions">
+            <SrsButton tone="again" label="Снова" hint="" onClick={() => { onRateCard(item.card!, "again"); nextItem(); }} />
+            <SrsButton tone="hard" label="Тяжело" hint="" onClick={() => { onRateCard(item.card!, "hard"); nextItem(); }} />
+            <SrsButton tone="good" label="Хорошо" hint="" onClick={() => { onRateCard(item.card!, "good"); nextItem(); }} />
+            <SrsButton tone="easy" label="Легко" hint="" onClick={() => { onRateCard(item.card!, "easy"); nextItem(); }} />
+          </div>
+        </>
+      )}
+      {item.kind === "quiz" && item.question && (
+        <>
+          <section className="quiz-item single">
+            <h3>{item.question.prompt}</h3>
+            <div className="options-list">
+              {item.question.options.map((option, i) => (
+                <button
+                  key={`${item.question!.id}-${i}`}
+                  type="button"
+                  className={getOptionClass(picked !== null, picked === item.question!.answerIndex, picked ?? undefined, item.question!.answerIndex, i)}
+                  onClick={() => picked === null && setPicked(i)}
+                  disabled={picked !== null}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            {picked !== null && (
+              <p className={picked === item.question.answerIndex ? "explanation correct" : "explanation wrong"}>
+                {picked === item.question.answerIndex ? "Верно. " : "Ошибка. "}
+                {item.question.explanation}
+              </p>
+            )}
+          </section>
+          <div className="bottom-actions single">
+            <button type="button" className="primary-button" onClick={nextItem} disabled={picked === null}>
+              Дальше <ArrowRight size={18} />
+            </button>
+          </div>
+        </>
+      )}
+      {item.kind === "practice" && item.task && (
+        <>
+          <section className="practice-card">
+            <h3>{item.task.title}</h3>
+            <p className="practice-problem">{item.task.problem}</p>
+            {item.task.hint && (
+              <p className="practice-hint">
+                <strong>Подсказка.</strong> {item.task.hint}
+              </p>
+            )}
+            {!showSolution && (
+              <button type="button" className="secondary-button" onClick={() => setShowSolution(true)}>
+                Показать решение
+              </button>
+            )}
+            {showSolution && (
+              <div className="practice-solution">
+                <h4>Решение</h4>
+                <ol>
+                  {item.task.solution.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+                <p className="practice-answer">
+                  <strong>Ответ.</strong> {item.task.answer}
+                </p>
+              </div>
+            )}
+          </section>
+          <div className="bottom-actions single">
+            <button type="button" className="primary-button" onClick={nextItem}>
+              Завершить <ArrowRight size={18} />
+            </button>
+          </div>
+        </>
+      )}
+    </article>
+  );
+}
+
+// ─────────────────────────────────────────────
+// «Билет освоен»
+// ─────────────────────────────────────────────
+
+function TicketDoneScreen({
+  ticket,
+  onNextTicket,
+  onBackToMenu,
+  onHome,
+}: {
+  ticket: Ticket;
+  onNextTicket: () => void;
+  onBackToMenu: () => void;
+  onHome: () => void;
+}) {
+  const nt = nextTicket(allTickets, ticket.id);
+  return (
+    <article className="content-panel">
+      <div className="finish-card passed big-finish">
+        <PartyPopper size={42} />
+        <h2>Билет освоен</h2>
+        <p>{ticket.number}. {ticket.title}</p>
+        <p className="muted">Теория, карточки и тест пройдены.</p>
+      </div>
+      {nt ? (
+        <button type="button" className="primary-button big" onClick={onNextTicket}>
+          Следующий билет: {nt.number}. {nt.title} <ArrowRight size={20} />
+        </button>
+      ) : (
+        <button type="button" className="primary-button big" onClick={onHome}>
+          На главную <ArrowRight size={20} />
+        </button>
+      )}
+      <button type="button" className="secondary-button big" onClick={onBackToMenu}>
+        В меню билета
+      </button>
+    </article>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Повторение, Экзамен, Настройки (без изменений)
+// ─────────────────────────────────────────────
+
 function ReviewScreen({
   state,
   onBack,
@@ -1052,7 +1679,6 @@ function ReviewScreen({
   onRateCard: (ticketId: string, card: Flashcard, grade: CardGrade) => void;
   onOpenTicket: (id: string) => void;
 }) {
-  // Берём список просроченных карт + добавляем новые до лимита.
   const queue = useMemo(() => {
     const due = collectDueCards(allTickets, state.progress);
     if (due.length >= state.settings.reviewsPerDay) {
@@ -1113,9 +1739,7 @@ function ReviewScreen({
         <ArrowLeft size={18} /> На главную
       </button>
       <section className="review-progress">
-        <span>
-          Карта {idx + 1} из {total}
-        </span>
+        <span>Карта {idx + 1} из {total}</span>
         <div className="progress-bar">
           <span style={{ width: `${((idx + 1) / total) * 100}%` }} />
         </div>
@@ -1183,29 +1807,6 @@ function ReviewScreen({
   );
 }
 
-function scheduleHint(state: ReturnType<typeof emptyTicketProgress>["cards"][string] | undefined, grade: CardGrade): number {
-  return schedule(state, grade).intervalDays;
-}
-
-function SrsButton({
-  tone,
-  label,
-  hint,
-  onClick,
-}: {
-  tone: "again" | "hard" | "good" | "easy";
-  label: string;
-  hint: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" className={`srs-button tone-${tone}`} onClick={onClick}>
-      <strong>{label}</strong>
-      <small>{hint}</small>
-    </button>
-  );
-}
-
 function ExamScreen({
   ticketIds,
   current,
@@ -1218,7 +1819,7 @@ function ExamScreen({
   ticketIds: string[];
   current: number;
   quizSample: QuizQuestion[];
-  answers: Answers;
+  answers: Record<string, number>;
   onChooseAnswer: (q: QuizQuestion, idx: number) => void;
   onNext: () => void;
   onExit: () => void;
@@ -1229,13 +1830,7 @@ function ExamScreen({
     const interval = window.setInterval(() => setSeconds((s) => Math.max(0, s - 1)), 1000);
     return () => window.clearInterval(interval);
   }, [current]);
-  if (!ticket) {
-    return (
-      <main className="study-screen">
-        <p>Билет не найден.</p>
-      </main>
-    );
-  }
+  if (!ticket) return <main className="study-screen"><p>Билет не найден.</p></main>;
   const minutes = Math.floor(seconds / 60);
   const ss = seconds % 60;
   const sample = quizSample.length ? quizSample : ticket.quiz;
@@ -1245,31 +1840,20 @@ function ExamScreen({
     <main className="study-screen">
       <section className="exam-banner">
         <Timer size={18} />
-        <strong>
-          {ticket.number}. {ticket.title}
-        </strong>
-        <span>
-          {minutes.toString().padStart(2, "0")}:{ss.toString().padStart(2, "0")}
-        </span>
+        <strong>{ticket.number}. {ticket.title}</strong>
+        <span>{minutes.toString().padStart(2, "0")}:{ss.toString().padStart(2, "0")}</span>
       </section>
       <section className="ticket-hero">
         <p className="eyebrow">{getSection(ticket.sectionId).shortTitle}</p>
-        <h2>
-          {ticket.number}. {ticket.title}
-        </h2>
+        <h2>{ticket.number}. {ticket.title}</h2>
         <p>{ticket.oneLiner}</p>
-        <p className="muted">
-          Тест без подсказок. {sample.length} вопросов из банка.
-        </p>
+        <p className="muted">Тест без подсказок. {sample.length} вопросов из банка.</p>
       </section>
       <article className="content-panel">
         <div className="quiz-list">
           {sample.map((question, i) => (
             <section key={question.id} className="quiz-item">
-              <h3>
-                <span className="q-num">{i + 1}</span>
-                {question.prompt}
-              </h3>
+              <h3><span className="q-num">{i + 1}</span>{question.prompt}</h3>
               <div className="options-list">
                 {question.options.map((option, optIdx) => (
                   <button
@@ -1287,9 +1871,7 @@ function ExamScreen({
         </div>
       </article>
       <div className="bottom-actions">
-        <button type="button" className="secondary-button" onClick={onExit}>
-          Выйти
-        </button>
+        <button type="button" className="secondary-button" onClick={onExit}>Выйти</button>
         <button
           type="button"
           className="primary-button"
@@ -1352,12 +1934,8 @@ function ExamResultScreen({
         </section>
       )}
       <div className="bottom-actions">
-        <button type="button" className="secondary-button" onClick={onHome}>
-          На главную
-        </button>
-        <button type="button" className="primary-button" onClick={onAgain}>
-          Ещё раз
-        </button>
+        <button type="button" className="secondary-button" onClick={onHome}>На главную</button>
+        <button type="button" className="primary-button" onClick={onAgain}>Ещё раз</button>
       </div>
     </main>
   );
@@ -1369,12 +1947,10 @@ function ExamSparkline({ history }: { history: ExamLogEntry[] }) {
   const w = 280;
   const h = 60;
   const pad = 6;
-  const max = 1;
-  const min = 0;
   const dx = (w - pad * 2) / (data.length - 1);
   const points = data.map((d, i) => {
     const x = pad + i * dx;
-    const y = pad + (1 - (d.overallRatio - min) / (max - min)) * (h - pad * 2);
+    const y = pad + (1 - d.overallRatio) * (h - pad * 2);
     return `${x},${y}`;
   });
   const last = data[data.length - 1];
@@ -1445,9 +2021,7 @@ function SettingsScreen({
       </button>
       <section className="content-panel">
         <h3>Дата экзамена</h3>
-        <p className="muted">
-          Если задать дату госа, на главной появится обратный отсчёт.
-        </p>
+        <p className="muted">Если задать дату госа, на главной появится обратный отсчёт.</p>
         <div className="settings-row">
           <input
             type="date"
@@ -1456,11 +2030,7 @@ function SettingsScreen({
             onChange={(e) => onUpdate({ examDate: e.target.value || undefined })}
           />
           {state.settings.examDate && (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => onUpdate({ examDate: undefined })}
-            >
+            <button type="button" className="secondary-button" onClick={() => onUpdate({ examDate: undefined })}>
               Очистить
             </button>
           )}
@@ -1498,11 +2068,7 @@ function SettingsScreen({
           Сохрани прогресс в файл — потом можно открыть на другом устройстве и импортировать.
         </p>
         <div className="settings-row">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => exportState(state)}
-          >
+          <button type="button" className="secondary-button" onClick={() => exportState(state)}>
             Экспорт в файл
           </button>
           <label className="secondary-button file-button">
@@ -1537,9 +2103,7 @@ function SettingsScreen({
       <section className="content-panel">
         <h3>Сброс</h3>
         <p className="muted">Удалить весь прогресс, лог экзаменов и настройки.</p>
-        <button type="button" className="danger-button" onClick={onReset}>
-          Сбросить всё
-        </button>
+        <button type="button" className="danger-button" onClick={onReset}>Сбросить всё</button>
       </section>
     </main>
   );
@@ -1558,360 +2122,9 @@ function exportState(state: AppState) {
   URL.revokeObjectURL(url);
 }
 
-function TheoryPanel({
-  ticket,
-  progress,
-  read,
-  onMarkRead,
-  onCheckAnswer,
-}: {
-  ticket: Ticket;
-  progress: TicketProgress | undefined;
-  read: boolean;
-  onMarkRead: () => void;
-  onCheckAnswer: (blockId: string, correct: boolean) => void;
-}) {
-  return (
-    <article className="content-panel">
-      {ticket.theory.map((block, idx) => (
-        <BlockRenderer
-          key={`${ticket.id}-${idx}`}
-          block={block}
-          alreadyPassed={
-            block.kind === "check" && progress?.checksPassed[block.id] ? true : false
-          }
-          onCheckAnswer={onCheckAnswer}
-        />
-      ))}
-      {ticket.glossary.length > 0 && (
-        <details className="study-block collapsible">
-          <summary>
-            <h3>Глоссарий ({ticket.glossary.length})</h3>
-          </summary>
-          <dl className="glossary">
-            {ticket.glossary.map((g) => (
-              <div key={g.term}>
-                <dt>{g.term}</dt>
-                <dd>{g.meaning}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      )}
-      <details className="study-block collapsible">
-        <summary>
-          <h3>Где обычно проваливают</h3>
-        </summary>
-        <ul>
-          {ticket.pitfalls.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
-        </ul>
-      </details>
-      {!read && (
-        <button type="button" className="primary-button big" onClick={onMarkRead}>
-          <CheckCircle2 size={20} />
-          Прочитал
-        </button>
-      )}
-      {read && (
-        <p className="read-tag">
-          <CheckCircle2 size={16} /> Прочитано
-        </p>
-      )}
-    </article>
-  );
-}
-
-function ExamPlanPanel({ ticket }: { ticket: Ticket }) {
-  return (
-    <article className="content-panel">
-      <section className="study-block">
-        <h3>Вступление</h3>
-        <p>{ticket.examPlan.opening}</p>
-      </section>
-      <section className="study-block">
-        <h3>План ответа</h3>
-        <ol>
-          {ticket.examPlan.steps.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
-      </section>
-      <section className="study-block">
-        <h3>Пример</h3>
-        <p>{ticket.examPlan.example}</p>
-      </section>
-      <section className="study-block">
-        <h3>Финал</h3>
-        <p>{ticket.examPlan.closing}</p>
-      </section>
-    </article>
-  );
-}
-
-function CardTrainer({
-  ticket,
-  progress,
-  cardIndex,
-  showBack,
-  onCardIndexChange,
-  onToggleCard,
-  onRateCard,
-}: {
-  ticket: Ticket;
-  progress: TicketProgress | undefined;
-  cardIndex: number;
-  showBack: boolean;
-  onCardIndexChange: (idx: number) => void;
-  onToggleCard: () => void;
-  onRateCard: (card: Flashcard, grade: CardGrade) => void;
-}) {
-  const cards = ticket.flashcards;
-  const matureCount = cards.filter((c) => {
-    const s = progress?.cards[c.id];
-    return s && s.intervalDays >= 21 && s.streak >= 3;
-  }).length;
-  const current = cards[cardIndex] ?? cards[0];
-  const cardState = progress?.cards[current?.id ?? ""];
-
-  return (
-    <article className="content-panel">
-      <div className="trainer-head">
-        <div>
-          <p className="eyebrow">SRS-обучение</p>
-          <h2>
-            {matureCount}/{cards.length} выучено
-          </h2>
-          <small className="muted">
-            {cardState?.intervalDays
-              ? `Текущий интервал: ${describeInterval(cardState.intervalDays)}`
-              : "Новая карта"}
-          </small>
-        </div>
-        <ProgressRing value={matureCount} max={cards.length} />
-      </div>
-      <div className="card-nav">
-        {cards.map((card, idx) => {
-          const s = progress?.cards[card.id];
-          const className =
-            idx === cardIndex
-              ? "active"
-              : s && s.intervalDays >= 21 && s.streak >= 3
-                ? "done"
-                : s && s.reps > 0
-                  ? "seen"
-                  : "";
-          return (
-            <button
-              key={card.id}
-              type="button"
-              className={className}
-              onClick={() => onCardIndexChange(idx)}
-              aria-label={`Карточка ${idx + 1}`}
-            />
-          );
-        })}
-      </div>
-      {current && (
-        <button
-          type="button"
-          className={`memory-card ${showBack ? "flipped" : ""}`}
-          onClick={onToggleCard}
-        >
-          <span>{showBack ? "ответ" : "вопрос"}</span>
-          <h3>{showBack ? current.back : current.front}</h3>
-          <small className="tap-hint">{showBack ? "тап — скрыть" : "тап — показать ответ"}</small>
-        </button>
-      )}
-      <div className="srs-actions">
-        <SrsButton
-          tone="again"
-          label="Снова"
-          hint="<10 мин"
-          onClick={() => current && onRateCard(current, "again")}
-        />
-        <SrsButton
-          tone="hard"
-          label="Тяжело"
-          hint={describeInterval(scheduleHint(cardState, "hard"))}
-          onClick={() => current && onRateCard(current, "hard")}
-        />
-        <SrsButton
-          tone="good"
-          label="Хорошо"
-          hint={describeInterval(scheduleHint(cardState, "good"))}
-          onClick={() => current && onRateCard(current, "good")}
-        />
-        <SrsButton
-          tone="easy"
-          label="Легко"
-          hint={describeInterval(scheduleHint(cardState, "easy"))}
-          onClick={() => current && onRateCard(current, "easy")}
-        />
-      </div>
-    </article>
-  );
-}
-
-function QuizPanel({
-  ticket,
-  quizSample,
-  answers,
-  attempts,
-  bestRatio,
-  onChooseAnswer,
-  onSave,
-  onRetry,
-}: {
-  ticket: Ticket;
-  quizSample: QuizQuestion[];
-  answers: Answers;
-  attempts: number;
-  bestRatio: number;
-  onChooseAnswer: (question: QuizQuestion, idx: number) => void;
-  onSave: () => void;
-  onRetry: () => void;
-}) {
-  const sample = quizSample.length ? quizSample : ticket.quiz;
-  const correct = sample.filter((q) => answers[q.id] === q.answerIndex).length;
-  const answered = sample.filter((q) => answers[q.id] !== undefined).length;
-  const total = sample.length;
-  const complete = answered === total;
-  const ratio = total ? correct / total : 0;
-  const passed = complete && ratio >= 0.8;
-  return (
-    <article className="content-panel">
-      <div className={passed ? "quiz-summary passed" : "quiz-summary"}>
-        <div>
-          <p className="eyebrow">Порог 80%</p>
-          <h2>
-            {correct}/{total}
-          </h2>
-          <span>
-            {complete
-              ? passed
-                ? "тема засчитана"
-                : "нужно повторить"
-              : `${answered}/${total} отвечено`}
-          </span>
-        </div>
-        <small>
-          {attempts === 0
-            ? `банк: ${ticket.quiz.length}`
-            : `лучший ${Math.round(bestRatio * 100)}% · попыток ${attempts}`}
-        </small>
-      </div>
-      <div className="quiz-list">
-        {sample.map((question, idx) => {
-          const selected = answers[question.id];
-          const isAnswered = selected !== undefined;
-          const isCorrect = selected === question.answerIndex;
-          return (
-            <section key={question.id} className="quiz-item">
-              <h3>
-                <span className="q-num">{idx + 1}</span>
-                {question.prompt}
-              </h3>
-              <div className="options-list">
-                {question.options.map((option, i) => (
-                  <button
-                    key={`${question.id}-${i}`}
-                    type="button"
-                    className={getOptionClass(isAnswered, isCorrect, selected, question.answerIndex, i)}
-                    onClick={() => onChooseAnswer(question, i)}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-              {isAnswered && (
-                <p className={isCorrect ? "explanation correct" : "explanation wrong"}>
-                  {isCorrect ? "Верно. " : "Ошибка. "}
-                  {question.explanation}
-                </p>
-              )}
-            </section>
-          );
-        })}
-      </div>
-      <div className="bottom-actions">
-        <button type="button" className="secondary-button" onClick={onRetry}>
-          Новый набор
-        </button>
-        <button
-          type="button"
-          className="primary-button"
-          disabled={!complete}
-          onClick={onSave}
-        >
-          Сохранить
-        </button>
-      </div>
-    </article>
-  );
-}
-
-function PracticePanel({
-  ticket,
-  shownSolutions,
-  progress,
-  onToggle,
-  onComplete,
-}: {
-  ticket: Ticket;
-  shownSolutions: Record<string, boolean>;
-  progress: TicketProgress | undefined;
-  onToggle: (taskId: string) => void;
-  onComplete: (ticketId: string, task: PracticeTask, done: boolean) => void;
-}) {
-  const tickProgress = progress;
-  return (
-    <article className="content-panel">
-      {(ticket.practice ?? []).map((task) => {
-        const open = Boolean(shownSolutions[task.id]);
-        const done = Boolean(tickProgress?.practiceDone[task.id]);
-        return (
-          <section key={task.id} className="practice-card">
-            <div className="practice-head">
-              <h3>{task.title}</h3>
-              {done && <span className="done-badge">решено</span>}
-            </div>
-            <p className="practice-problem">{task.problem}</p>
-            {task.hint && (
-              <p className="practice-hint">
-                <strong>Подсказка.</strong> {task.hint}
-              </p>
-            )}
-            <button type="button" className="secondary-button" onClick={() => onToggle(task.id)}>
-              {open ? "Скрыть решение" : "Показать решение"}
-            </button>
-            {open && (
-              <div className="practice-solution">
-                <h4>Решение</h4>
-                <ol>
-                  {task.solution.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ol>
-                <p className="practice-answer">
-                  <strong>Ответ.</strong> {task.answer}
-                </p>
-                <button
-                  type="button"
-                  className={done ? "secondary-button" : "primary-button"}
-                  onClick={() => onComplete(ticket.id, task, !done)}
-                >
-                  {done ? "Снять отметку" : "Я разобрал"}
-                </button>
-              </div>
-            )}
-          </section>
-        );
-      })}
-    </article>
-  );
-}
+// ─────────────────────────────────────────────
+// Помощники
+// ─────────────────────────────────────────────
 
 function BlockRenderer({
   block,
@@ -1994,8 +2207,7 @@ function MicroCheck({
   function pick(idx: number) {
     if (picked !== null) return;
     setPicked(idx);
-    if (idx === block.answerIndex) onAnswered(true);
-    else onAnswered(false);
+    onAnswered(idx === block.answerIndex);
   }
 
   return (
@@ -2033,18 +2245,6 @@ function MicroCheck({
         </p>
       )}
     </aside>
-  );
-}
-
-function ProgressRing({ value, max }: { value: number; max: number }) {
-  const percent = max ? Math.round((value / max) * 100) : 0;
-  return (
-    <div
-      className="progress-ring"
-      style={{ background: `conic-gradient(#166f5f ${percent}%, #e6edf4 0)` }}
-    >
-      <strong>{percent}%</strong>
-    </div>
   );
 }
 

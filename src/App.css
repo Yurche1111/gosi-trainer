@@ -1958,6 +1958,180 @@ ul, ol, dl {
   margin-right: 4px;
 }
 
+/* ---------- Step progress (theory/cards/quiz/practice) ---------- */
+
+.step-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.step-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.step-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+  transition: width 0.3s ease;
+}
+
+.step-counter {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.step-title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+/* ---------- Single quiz item ---------- */
+
+.quiz-item.single {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.quiz-item.single h3 {
+  font-size: 18px;
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+
+.bottom-actions.single {
+  grid-template-columns: 1fr;
+}
+
+/* ---------- Finish card ---------- */
+
+.finish-card {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+  padding: 24px 18px;
+  border-radius: 16px;
+  background: var(--blue-soft);
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.finish-card svg {
+  color: var(--blue);
+  margin-bottom: 4px;
+}
+
+.finish-card.passed {
+  background: var(--green-soft);
+}
+
+.finish-card.passed svg {
+  color: var(--green);
+}
+
+.finish-card.failed {
+  background: var(--yellow-soft);
+}
+
+.finish-card.failed svg {
+  color: #8a5a00;
+}
+
+.finish-card h2 {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.finish-card.passed h2 {
+  color: var(--green);
+}
+
+.finish-card.failed h2 {
+  color: #8a5a00;
+}
+
+.finish-card p {
+  font-size: 14px;
+  color: #344054;
+  line-height: 1.5;
+  max-width: 320px;
+}
+
+.finish-card .muted {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.finish-card.big-finish {
+  padding: 32px 18px;
+}
+
+.finish-card.big-finish h2 {
+  font-size: 30px;
+}
+
+.finish-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.finish-grid > span {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  text-align: left;
+}
+
+.finish-grid b {
+  font-weight: 800;
+}
+
+.finish-grid .tone-easy {
+  color: var(--blue);
+}
+
+.finish-grid .tone-good {
+  color: var(--green);
+}
+
+.finish-grid .tone-hard {
+  color: #8a5a00;
+}
+
+.finish-grid .tone-again {
+  color: var(--red);
+}
+
+/* ---------- Big secondary button ---------- */
+
+.secondary-button.big {
+  width: 100%;
+  min-height: 52px;
+  font-size: 15px;
+}
+
 /* ---------- Sparkline ---------- */
 
 .sparkline {

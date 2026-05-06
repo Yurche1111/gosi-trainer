@@ -5,14 +5,16 @@ import type {
   Flashcard,
   ProgressMap,
   QuizQuestion,
+  TheoryBlock,
   Ticket,
   TicketProgress,
   TicketStatus,
 } from "../types";
-import { emptyCardState, isDue, isMature } from "./srs";
+import { isDue, isMature } from "./srs";
 
 export const PASS_RATIO = 0.8;
 export const QUIZ_SAMPLE_SIZE = 8;
+export const CARD_SESSION_SIZE = 8;
 export const KEEP_ATTEMPTS = 10;
 export const KEEP_EXAMS = 5;
 
@@ -331,4 +333,111 @@ export function recordAttempt(progress: TicketProgress, attempt: TicketProgress[
 /** Записать результат экзамена. */
 export function recordExam(exams: ExamLogEntry[], entry: ExamLogEntry): ExamLogEntry[] {
   return [...exams, entry].slice(-KEEP_EXAMS);
+}
+
+// ─────────────────────────────────────────────
+// Учебный путь: теория → карты → тест → практика
+// ─────────────────────────────────────────────
+
+export type StudyStep = "theory" | "cards" | "quiz" | "practice";
+
+/** Какой шаг следует после данного. null если это последний шаг билета. */
+export function nextStep(ticket: Ticket, current: StudyStep): StudyStep | null {
+  const flow: StudyStep[] = ["theory", "cards", "quiz"];
+  if (ticket.practice && ticket.practice.length > 0) flow.push("practice");
+  const idx = flow.indexOf(current);
+  if (idx === -1 || idx === flow.length - 1) return null;
+  return flow[idx + 1];
+}
+
+/** Следующий билет в общем списке. null если это последний. */
+export function nextTicket(allTickets: Ticket[], currentId: string): Ticket | null {
+  const idx = allTickets.findIndex((t) => t.id === currentId);
+  if (idx === -1 || idx + 1 >= allTickets.length) return null;
+  return allTickets[idx + 1];
+}
+
+// ─────────────────────────────────────────────
+// Теория: разбивка на секции по h-блокам
+// ─────────────────────────────────────────────
+
+export interface TheorySection {
+  /** Заголовок секции (берётся из первого "h" блока, либо «Введение»). */
+  heading: string;
+  /** Блоки секции включая заголовок. */
+  blocks: TheoryBlock[];
+}
+
+/** Разбивает theory на секции по заголовкам "h". */
+export function groupTheoryIntoSections(blocks: TheoryBlock[]): TheorySection[] {
+  const sections: TheorySection[] = [];
+  let current: TheorySection = { heading: "Введение", blocks: [] };
+  for (const block of blocks) {
+    if (block.kind === "h") {
+      if (current.blocks.length > 0) sections.push(current);
+      current = { heading: block.text, blocks: [block] };
+    } else {
+      current.blocks.push(block);
+    }
+  }
+  if (current.blocks.length > 0) sections.push(current);
+  return sections;
+}
+
+// ─────────────────────────────────────────────
+// Сессия карт
+// ─────────────────────────────────────────────
+
+/** Подбирает сессию карт для билета: сначала просроченные/проваленные, потом новые, ограничение N. */
+export function pickCardSession(
+  ticket: Ticket,
+  progress: TicketProgress | undefined,
+  size = CARD_SESSION_SIZE,
+  now = new Date(),
+): Flashcard[] {
+  const due: Flashcard[] = [];
+  const lapsed: Flashcard[] = [];
+  const fresh: Flashcard[] = [];
+  for (const card of ticket.flashcards) {
+    const state = progress?.cards[card.id];
+    if (!state || state.reps === 0) {
+      fresh.push(card);
+    } else if ((state.lapses ?? 0) > 0 && state.streak < 2) {
+      lapsed.push(card);
+    } else if (isDue(state, now)) {
+      due.push(card);
+    }
+  }
+  // Если все карты «зрелые» и не due — возьмём все карты вообще (повторение «на всякий»).
+  let pool: Flashcard[] = [...lapsed, ...due, ...fresh];
+  if (pool.length === 0) pool = ticket.flashcards.slice();
+  return pool.slice(0, size);
+}
+
+// ─────────────────────────────────────────────
+// Прогон
+// ─────────────────────────────────────────────
+
+export interface DrillItem {
+  kind: "card" | "quiz" | "practice";
+  card?: Flashcard;
+  question?: QuizQuestion;
+  task?: NonNullable<Ticket["practice"]>[number];
+}
+
+/** Сборка «Прогона» по билету: 3 карты + 3 теста + 1 практика (если есть). */
+export function buildDrill(
+  ticket: Ticket,
+  progress: TicketProgress | undefined,
+  seed = Date.now(),
+): DrillItem[] {
+  const items: DrillItem[] = [];
+  const cards = pickCardSession(ticket, progress, 3);
+  for (const c of cards) items.push({ kind: "card", card: c });
+  const questions = sampleQuiz(ticket.quiz, 3, seed);
+  for (const q of questions) items.push({ kind: "quiz", question: q });
+  if (ticket.practice && ticket.practice.length > 0) {
+    items.push({ kind: "practice", task: ticket.practice[0] });
+  }
+  return items;
 }
