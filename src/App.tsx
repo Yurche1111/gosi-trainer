@@ -383,11 +383,10 @@ function Header({
           <SettingsIcon size={20} />
         </button>
       </header>
-      <a
+      <button
+        type="button"
         className="tiktok-escape"
-        href="https://www.tiktok.com/"
-        target="_blank"
-        rel="noopener noreferrer"
+        onClick={openTikTok}
       >
         <span className="tiktok-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="22" height="22">
@@ -409,7 +408,7 @@ function Header({
         </span>
         <span className="tiktok-text">похуй го тикток</span>
         <span className="tiktok-spark" aria-hidden="true" />
-      </a>
+      </button>
     </>
   );
 }
@@ -2331,6 +2330,40 @@ function extractMatch(ticket: Ticket, query: string): string {
   );
   if (term) return `${term.term}: ${term.meaning}`;
   return ticket.title;
+}
+
+function openTikTok() {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isAndroid = /Android/.test(ua);
+  const webUrl = "https://www.tiktok.com/foryou";
+
+  if (isAndroid) {
+    // Intent URL — Android сам откроет приложение, иначе перейдёт на сайт.
+    window.location.href =
+      "intent://www.tiktok.com/foryou#Intent;package=com.zhiliaoapp.musically;scheme=https;S.browser_fallback_url=" +
+      encodeURIComponent(webUrl) +
+      ";end";
+    return;
+  }
+
+  if (isIOS) {
+    // На iOS ставим таймер: если приложение схватило ссылку — страница ушла, таймер не сработает.
+    // Если приложения нет — через 1.2 сек откроем web.
+    const timer = window.setTimeout(() => {
+      window.location.href = webUrl;
+    }, 1200);
+    const onHide = () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.location.href = "snssdk1233://feed";
+    return;
+  }
+
+  // Десктоп — просто новая вкладка с сайтом.
+  window.open(webUrl, "_blank", "noopener,noreferrer");
 }
 
 function loadState(): AppState {
