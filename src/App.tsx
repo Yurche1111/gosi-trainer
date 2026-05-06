@@ -1069,7 +1069,26 @@ function TheoryFlow({
   if (hasCheatSheet) extraSteps.push("cheatSheet");
   if (hasProvocations) extraSteps.push("provocations");
   const totalSteps = sectionsList.length + extraSteps.length;
-  const [step, setStep] = useState(0);
+  const sessionKey = `gosi-theory-step:${ticket.id}`;
+  const [step, setStep] = useState<number>(() => {
+    try {
+      const raw = window.sessionStorage.getItem(sessionKey);
+      if (raw) {
+        const v = Number(raw);
+        if (!Number.isNaN(v) && v >= 0 && v < totalSteps) return v;
+      }
+    } catch {
+      // ignore
+    }
+    return 0;
+  });
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(sessionKey, String(step));
+    } catch {
+      // ignore
+    }
+  }, [step, sessionKey]);
   const isLast = step === totalSteps - 1;
   const stepLabel = `${step + 1} / ${totalSteps}`;
   const extraStep = step >= sectionsList.length ? extraSteps[step - sectionsList.length] : null;
@@ -1080,6 +1099,11 @@ function TheoryFlow({
   }
 
   function handleFinish() {
+    try {
+      window.sessionStorage.removeItem(sessionKey);
+    } catch {
+      // ignore
+    }
     onMarkRead();
     onNext();
   }
