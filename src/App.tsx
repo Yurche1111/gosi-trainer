@@ -370,18 +370,47 @@ function Header({
     title = "Подготовка";
   }
   return (
-    <header className="app-header">
-      <button type="button" className="icon-button" onClick={onHome} aria-label="На главную">
-        <HomeIcon size={20} />
-      </button>
-      <div className="app-header-title">
-        <p>{kicker}</p>
-        <h1>{title}</h1>
-      </div>
-      <button type="button" className="icon-button" onClick={onSettings} aria-label="Настройки">
-        <SettingsIcon size={20} />
-      </button>
-    </header>
+    <>
+      <header className="app-header">
+        <button type="button" className="icon-button" onClick={onHome} aria-label="На главную">
+          <HomeIcon size={20} />
+        </button>
+        <div className="app-header-title">
+          <p>{kicker}</p>
+          <h1>{title}</h1>
+        </div>
+        <button type="button" className="icon-button" onClick={onSettings} aria-label="Настройки">
+          <SettingsIcon size={20} />
+        </button>
+      </header>
+      <a
+        className="tiktok-escape"
+        href="https://www.tiktok.com/"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <span className="tiktok-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <path
+              d="M19.6 6.3a4.6 4.6 0 0 1-2.7-1.5 4.6 4.6 0 0 1-1.1-2.4h-3v13.6a2.4 2.4 0 1 1-2.4-2.4c.3 0 .5 0 .8.1V10.6a5.7 5.7 0 1 0 4.6 5.6V8.7a7.7 7.7 0 0 0 4.6 1.5V7c-.3 0-.5 0-.8 0z"
+              fill="#25F4EE"
+              transform="translate(-1.2 1.2)"
+            />
+            <path
+              d="M19.6 6.3a4.6 4.6 0 0 1-2.7-1.5 4.6 4.6 0 0 1-1.1-2.4h-3v13.6a2.4 2.4 0 1 1-2.4-2.4c.3 0 .5 0 .8.1V10.6a5.7 5.7 0 1 0 4.6 5.6V8.7a7.7 7.7 0 0 0 4.6 1.5V7c-.3 0-.5 0-.8 0z"
+              fill="#FE2C55"
+              transform="translate(1.2 -1.2)"
+            />
+            <path
+              d="M19.6 6.3a4.6 4.6 0 0 1-2.7-1.5 4.6 4.6 0 0 1-1.1-2.4h-3v13.6a2.4 2.4 0 1 1-2.4-2.4c.3 0 .5 0 .8.1V10.6a5.7 5.7 0 1 0 4.6 5.6V8.7a7.7 7.7 0 0 0 4.6 1.5V7c-.3 0-.5 0-.8 0z"
+              fill="#fff"
+            />
+          </svg>
+        </span>
+        <span className="tiktok-text">похуй го тикток</span>
+        <span className="tiktok-spark" aria-hidden="true" />
+      </a>
+    </>
   );
 }
 
