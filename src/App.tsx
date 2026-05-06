@@ -2380,6 +2380,16 @@ function SettingsScreen({
         </div>
       </section>
       <section className="content-panel">
+        <h3>Горячие клавиши</h3>
+        <p className="muted">На десктопе можно учиться без мыши — намного быстрее.</p>
+        <ul className="hotkey-list">
+          <li><kbd>1</kbd>–<kbd>4</kbd> в тесте — выбрать вариант ответа</li>
+          <li><kbd>Enter</kbd> в тесте — следующий вопрос</li>
+          <li><kbd>Space</kbd> в карточках — перевернуть карту</li>
+          <li><kbd>1</kbd>–<kbd>4</kbd> в карточках (после переворота) — оценка SRS: Снова / Тяжело / Хорошо / Легко</li>
+        </ul>
+      </section>
+      <section className="content-panel">
         <h3>Сброс</h3>
         <p className="muted">Удалить весь прогресс, лог экзаменов и настройки.</p>
         <button type="button" className="danger-button" onClick={onReset}>Сбросить всё</button>
