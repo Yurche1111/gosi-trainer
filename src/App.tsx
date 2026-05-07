@@ -1349,21 +1349,8 @@ function CardSession({
     setIdx((i) => i + 1);
   }
 
-  if (!current) {
-    return (
-      <article className="content-panel">
-        <div className="empty-state">
-          <Layers3 size={28} />
-          <h2>Карта не найдена</h2>
-          <button type="button" className="primary-button" onClick={onNext}>
-            Дальше <ArrowRight size={18} />
-          </button>
-        </div>
-      </article>
-    );
-  }
-
   // Горячие клавиши: Пробел — перевернуть, 1-4 — оценить (после переворота).
+  // ВАЖНО: useEffect должен быть до early-return, иначе нарушаются Rules of Hooks.
   useEffect(() => {
     if (!current || idx >= session.length) return;
     function onKey(e: KeyboardEvent) {
@@ -1382,6 +1369,20 @@ function CardSession({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [idx, showBack, session, current]);
+
+  if (!current) {
+    return (
+      <article className="content-panel">
+        <div className="empty-state">
+          <Layers3 size={28} />
+          <h2>Карта не найдена</h2>
+          <button type="button" className="primary-button" onClick={onNext}>
+            Дальше <ArrowRight size={18} />
+          </button>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article className="content-panel">
