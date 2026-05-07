@@ -1349,6 +1349,20 @@ function CardSession({
     setIdx((i) => i + 1);
   }
 
+  if (!current) {
+    return (
+      <article className="content-panel">
+        <div className="empty-state">
+          <Layers3 size={28} />
+          <h2>Карта не найдена</h2>
+          <button type="button" className="primary-button" onClick={onNext}>
+            Дальше <ArrowRight size={18} />
+          </button>
+        </div>
+      </article>
+    );
+  }
+
   // Горячие клавиши: Пробел — перевернуть, 1-4 — оценить (после переворота).
   useEffect(() => {
     if (!current || idx >= session.length) return;
@@ -1555,6 +1569,20 @@ function QuizFlow({
   }
 
   const q = sample[idx];
+  if (!q) {
+    return (
+      <article className="content-panel">
+        <div className="empty-state">
+          <Brain size={28} />
+          <h2>Вопрос не найден</h2>
+          <p>Не удалось загрузить вопрос. Попробуй вернуться в меню билета.</p>
+          <button type="button" className="primary-button" onClick={onNext}>
+            Дальше <ArrowRight size={18} />
+          </button>
+        </div>
+      </article>
+    );
+  }
   const answered = picked !== null;
   const isCorrect = picked === q.answerIndex;
 
